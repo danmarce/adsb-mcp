@@ -8,8 +8,9 @@ follows it; `C:\Code\forge-mcp` is the reference implementation and `C:\Code\ige
 
 A thin MCP server over a **local ADS-B receiver's `aircraft.json`** (readsb / tar1090 / dump1090 shape —
 keyless, live, your OWN data). Answers "what aircraft are overhead / near X / matching this callsign" with
-structured data for a model to reason over. The lab's feeder is `tatiana-wisla` (see the homelab repo,
-`hosts/tatiana-wisla.md`), serving `aircraft.json` on the IoT VLAN. The star query: *"¿qué avión es ese?"*
+structured data for a model to reason over. `ADSB_URL` points at the feeder's `aircraft.json` (default
+`http://localhost:8080/data/aircraft.json`); the real feeder host lives in the homelab repo's deploy config,
+never here (standard §6 — repo stays generic and public). The star query: *"¿qué avión es ese?"*
 
 Deploys behind mcpo → OWUI, exactly like igepn-mcp / news-mcp.
 

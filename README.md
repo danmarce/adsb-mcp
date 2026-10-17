@@ -23,7 +23,7 @@ uv sync                      # (--system-certs behind a TLS-inspecting proxy)
 # stdio:
 uv run adsb-mcp serve
 # streamable-http (behind mcpo / on the LAN):
-ADSB_MCP_TOKEN=... ADSB_URL=http://10.25.1.90:8080/data/aircraft.json \
+ADSB_MCP_TOKEN=... ADSB_URL=http://<feeder-host>:8080/data/aircraft.json \
   ADSB_SITE_LAT=... ADSB_SITE_LON=... \
   uv run adsb-mcp serve --transport http --host 0.0.0.0 --port 8000
 ```
@@ -32,7 +32,7 @@ ADSB_MCP_TOKEN=... ADSB_URL=http://10.25.1.90:8080/data/aircraft.json \
 
 | Var | Default | Notes |
 |---|---|---|
-| `ADSB_URL` | `http://10.25.1.90:8080/data/aircraft.json` | The feeder's live snapshot. |
+| `ADSB_URL` | `http://localhost:8080/data/aircraft.json` | Your feeder's live snapshot (readsb / tar1090 path). |
 | `ADSB_SITE_LAT` / `ADSB_SITE_LON` | — | Receiver location for nearest-first overhead. **Home-location PII — from 1Password, never committed.** Unset = overhead without distances. |
 | `ADSB_MCP_TOKEN` | — | Bearer required on streamable-http when set. |
 | `ADSB_HTTP_TIMEOUT` | `10` | Seconds. |
@@ -40,8 +40,14 @@ ADSB_MCP_TOKEN=... ADSB_URL=http://10.25.1.90:8080/data/aircraft.json \
 ## Auth & deployment
 
 Transports: **stdio**, or **streamable-http + bearer** on a private network (behind mcpo). No OAuth in the
-server. `/healthz` is open; everything else needs the bearer when a token is set. The feeder is the lab's
-own receiver (`hosts/tatiana-wisla.md`).
+server. `/healthz` is open; everything else needs the bearer when a token is set. The feeder is your
+own receiver; point `ADSB_URL` at it.
+
+## AI assistance
+
+adsb-mcp is developed openly with the help of Claude (Anthropic). Commits Claude helped write carry a
+`Co-Authored-By: Claude` trailer. The code and design are open source so the work can be inspected, reused,
+and given back.
 
 ## License
 

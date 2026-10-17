@@ -10,9 +10,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-# The feeder's live aircraft.json. adsb.im / tar1090 / readsb serve it here by default. The lab's feeder
-# (hosts/tatiana-wisla.md) exposes it on the IoT VLAN; override via env for another receiver.
-DEFAULT_ADSB_URL = "http://10.25.1.90:8080/data/aircraft.json"
+# The feeder's live aircraft.json. adsb.im / tar1090 / readsb serve it at this path by default; set
+# ADSB_URL to point at your receiver (deployment-specific hosts live in the deploy config, not here).
+DEFAULT_ADSB_URL = "http://localhost:8080/data/aircraft.json"
 
 
 def _opt_float(name: str) -> float | None:
