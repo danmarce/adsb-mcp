@@ -1,0 +1,29 @@
+[project]
+name = "adsb-mcp"
+version = "0.1.0"
+description = "Local ADS-B flight data (your own receiver's aircraft.json) exposed as MCP tools — keyless, live, structured"
+readme = "README.md"
+authors = [
+    { name = "Daniel Nunez", email = "danmarce@gmail.com" }
+]
+license = "MPL-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp>=2.2",
+    "truststore>=0.10.5",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+adsb-mcp = "adsb_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
