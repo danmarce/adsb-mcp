@@ -4,6 +4,11 @@ Context for Claude Code sessions in this repo. Read `~/.claude/mcp-server-standa
 follows it; `C:\Code\forge-mcp` is the reference implementation and `C:\Code\igepn-mcp` is the closest twin
 (a local structured source → FastMCP → mcpo → OWUI). This file records the *why*.
 
+> **▶ Current work queue / handoff brief: [`NEXT.md`](NEXT.md).** The MVP live tier is built, deployed
+> and validated (2026-10-17). Next up: (1) drop `observer` from `aircraft_overhead` (PII); (2) the
+> historical-data tier — a configurable-interval background poller + the passes DB + analytics (the
+> `igepn-mcp` twin). Read NEXT.md before starting.
+
 ## What this is
 
 A thin MCP server over a **local ADS-B receiver's `aircraft.json`** (readsb / tar1090 / dump1090 shape —
