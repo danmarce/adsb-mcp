@@ -13,6 +13,7 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp>=2.2",
     "truststore>=0.10.5",
+    "tzdata>=2026.5",
     "uvicorn>=0.54.0",
 ]
 

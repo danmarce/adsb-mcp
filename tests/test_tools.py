@@ -56,7 +56,8 @@ def _call(settings: Settings, name: str, args: dict) -> dict:
 
 def test_every_tool_declares_title_and_all_four_hints(env):
     tools = asyncio.run(build_server(Settings()).list_tools())
-    assert {t.name for t in tools} == {"aircraft_overhead", "aircraft_near", "find_aircraft"}
+    assert {t.name for t in tools} == {"aircraft_overhead", "aircraft_near", "find_aircraft",
+                                       "traffic_stats", "aircraft_history"}
     for t in tools:
         wire = t.annotations.model_dump(by_alias=True)
         for hint in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"):
@@ -68,7 +69,8 @@ def test_every_tool_declares_title_and_all_four_hints(env):
 
 def test_overhead_sorts_by_distance_and_excludes_grounded_and_posless(env):
     d = _call(Settings(), "aircraft_overhead", {})
-    assert d["status"] == "ok" and d["site_configured"] is True and d["observer"]["lat"] == -0.18
+    assert d["status"] == "ok" and d["site_configured"] is True and d["reference"] == {"kind": "site"}
+    assert "observer" not in d and "-0.18" not in json.dumps(d)   # the site (PII) is never echoed
     hexes = [a["hex"] for a in d["aircraft"]]
     assert hexes[0] == "e80abc"                      # nearest (near-Quito) first
     assert "e8aaaa" not in hexes and "e8bbbb" not in hexes   # grounded + position-less excluded
@@ -84,7 +86,7 @@ def test_overhead_without_site_is_graceful(env, monkeypatch):
     monkeypatch.delenv("ADSB_SITE_LAT", raising=False)
     monkeypatch.delenv("ADSB_SITE_LON", raising=False)
     d = _call(Settings(), "aircraft_overhead", {})
-    assert d["status"] == "ok" and d["site_configured"] is False and d["observer"] is None
+    assert d["status"] == "ok" and d["site_configured"] is False and d["reference"] is None
     assert "note" in d and "distance_km" not in d["aircraft"][0]
 
 
@@ -111,3 +113,29 @@ def test_feeder_down_is_error(env):
     env.down = True
     d = _call(Settings(), "aircraft_overhead", {})
     assert d["status"] == "error" and d["kind"] == "feeder"
+
+
+def test_overhead_falls_back_to_the_airport(env, monkeypatch):
+    monkeypatch.delenv("ADSB_SITE_LAT", raising=False)
+    monkeypatch.delenv("ADSB_SITE_LON", raising=False)
+    monkeypatch.setenv("ADSB_AIRPORT_ICAO", "seqm")
+    monkeypatch.setenv("ADSB_AIRPORT_LAT", "-0.129")
+    monkeypatch.setenv("ADSB_AIRPORT_LON", "-78.358")
+    d = _call(Settings(), "aircraft_overhead", {})
+    assert d["status"] == "ok" and d["site_configured"] is False
+    assert d["reference"] == {"kind": "airport", "icao": "SEQM"} and "airport" in d["note"]
+    assert d["aircraft"][0]["hex"] == "e80abc" and d["aircraft"][0]["distance_km"] > 10
+
+
+def test_live_tools_reuse_a_fresh_recorder_snapshot(env):
+    from adsb_mcp.feeder import FeederClient, Snapshots
+
+    s = Settings()
+    snaps = Snapshots(FeederClient(s), max_age_s=30)
+    asyncio.run(snaps.refresh())
+    assert len(env.calls) == 1
+    res = asyncio.run(build_server(s, snaps).call_tool("aircraft_overhead", {}))
+    assert json.loads(res.content[-1].text)["status"] == "ok"
+    assert len(env.calls) == 1          # served from the recorder's snapshot: no extra hit on the feeder
+    asyncio.run(build_server(s, snaps).call_tool("aircraft_overhead", {}))
+    assert snaps._latest["aircraft"][0].get("distance_km") is None   # tools annotate copies, not the cache

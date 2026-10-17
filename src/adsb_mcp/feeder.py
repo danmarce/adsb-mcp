@@ -1,13 +1,13 @@
 """Thin async client over a local ADS-B receiver's `aircraft.json` (readsb / tar1090 / dump1090 shape).
 
-Stateless: every call fetches the live snapshot and normalizes it. No DB, no accumulation — the caller
-owns state. (The "log one row per pass" accumulation/analytics tier is a documented future layer; see
-CLAUDE.md.) Field names follow readsb: `hex`, `flight`, `r`, `t`, `alt_baro`, `gs`, `track`, `baro_rate`,
+Fetches the live snapshot and normalizes it. `Snapshots` lets the live tools reuse the background
+recorder's latest snapshot while it's fresh, so a busy chat doesn't add load on a Pi-class feeder. Field names follow readsb: `hex`, `flight`, `r`, `t`, `alt_baro`, `gs`, `track`, `baro_rate`,
 `squawk`, `category`, `lat`, `lon`, `rssi`, `seen`, `seen_pos`."""
 
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
 import httpx
@@ -89,3 +89,31 @@ class FeederClient:
             raise FeederError(f"feeder returned non-JSON from {self.s.adsb_url}: {e}") from e
         aircraft = [normalize(a) for a in (data.get("aircraft") or [])]
         return {"now": data.get("now"), "aircraft": aircraft}
+
+
+class Snapshots:
+    """The latest snapshot, shared by the recorder and the live tools.
+
+    With the recorder on (`max_age_s` > 0) a tool call reuses the last snapshot if it's at most `max_age_s`
+    old, else fetches. With it off every call fetches (the pure live tier). Callers get copies — the tools
+    annotate aircraft dicts in place."""
+
+    def __init__(self, feeder: FeederClient, max_age_s: float = 0) -> None:
+        self.feeder = feeder
+        self.max_age_s = max_age_s
+        self._latest: dict[str, Any] | None = None
+        self._at = 0.0
+
+    async def refresh(self) -> dict[str, Any]:
+        snap = await self.feeder.fetch()
+        self._latest, self._at = snap, time.monotonic()
+        return snap
+
+    async def get(self) -> tuple[dict[str, Any], float]:
+        """Return (snapshot copy, age in seconds)."""
+        age = time.monotonic() - self._at
+        if self._latest is None or self.max_age_s <= 0 or age > self.max_age_s:
+            await self.refresh()
+            age = 0.0
+        snap = self._latest
+        return {"now": snap["now"], "aircraft": [dict(a) for a in snap["aircraft"]]}, age
