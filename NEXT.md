@@ -26,6 +26,29 @@ repo, never here.
 - Baro altitude is pressure altitude, not QNH: at a high airport the AGL estimate can be off by a few
   hundred feet. Landing is confirmed by `on_ground`, not altitude, for that reason.
 
+### Field notes (Daniel, 2026-10-18 — after the first hours of the board)
+
+- **Missed takeoffs look like overflights.** Terrain hides some departures; the receiver first sees them
+  overhead as they turn south, so the outcome is `overflight`. Enrichment can correct this after the fact:
+  if OpenSky's origin is our airport, it was a departure (and destination = our airport → an arrival).
+  Idea: keep `outcome` as *observed* and add an `outcome_enriched` (or similar) set in `enrich._settle` —
+  measure first how many overflights have origin/destination = `ADSB_AIRPORT_ICAO`.
+- **Multi-leg flight numbers** (e.g. LNE1423: UIO→GYE, then GYE→Galápagos). OpenSky's `/flights/aircraft`
+  reports each takeoff-to-landing **leg** as its own flight, and we match by time overlap, so a pass gets
+  the leg it actually saw (UIO→GYE). `usual_route` per callsign is then "the leg seen here" — right for
+  "where is it going now", but not the flight number's final destination. Check on real data that legs
+  come back separately.
+- **One airframe, several callsigns a day** (e.g. flights in Peru, then Ecuador, then elsewhere). Handled
+  by design: passes are per airframe with their own callsign, and one OpenSky call per airframe-day
+  returns all its legs, matched pass by pass. `aircraft_history` by hex shows the rotation.
+- **Learning compounds**: ~80 flights/day here; the longer it runs, the better `usual_route` gets.
+- **Board in Home Assistant works only on the LAN**: the iframe makes the *viewer's browser* fetch the board,
+  and away from home it can't reach the LAN host (HA's own remote access only tunnels HA). Options:
+  expose `/board` over https through the same proxy/tunnel as HA (it's PII-free and open, but it would then
+  be a public view of the traffic around the airport), or let HA fetch `/board.json` itself with a RESTful
+  sensor — then it works remotely through HA, and enables automations (747 on final, squawk 7700). If the
+  sensor route is taken, consider a compact `/board/summary.json` sized for HA state attributes.
+
 ## Backlog
 
 - **Dedicated analytics tools** (if callers benefit — `traffic_stats` covers them today):
