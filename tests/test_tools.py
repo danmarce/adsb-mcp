@@ -139,3 +139,19 @@ def test_live_tools_reuse_a_fresh_recorder_snapshot(env):
     assert len(env.calls) == 1          # served from the recorder's snapshot: no extra hit on the feeder
     asyncio.run(build_server(s, snaps).call_tool("aircraft_overhead", {}))
     assert snaps._latest["aircraft"][0].get("distance_km") is None   # tools annotate copies, not the cache
+
+
+def test_overhead_is_approximate_by_default(env):
+    d = _call(Settings(), "aircraft_overhead", {})
+    a = d["aircraft"][0]
+    assert d["precision"] == "approximate" and "precision_note" in d
+    assert isinstance(a["distance_km"], int) and a["distance_km"] >= 1 and a["bearing_deg"] % 10 == 0
+    assert a["lat"] == round(a["lat"], 2) and a["lon"] == round(a["lon"], 2)
+
+
+def test_overhead_exact_when_opted_in(env, monkeypatch):
+    monkeypatch.setenv("ADSB_EXACT_LOCATION", "true")
+    d = _call(Settings(), "aircraft_overhead", {})
+    a = d["aircraft"][0]
+    assert d["precision"] == "exact" and "precision_note" not in d
+    assert a["lat"] == -0.20 and a["lon"] == -78.50 and a["distance_km"] == 4.0

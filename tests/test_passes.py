@@ -242,3 +242,27 @@ def test_history_tools_refuse_when_not_recording(monkeypatch, tmp_path):
     for name, args in (("traffic_stats", {}), ("aircraft_history", {"query": "lan"})):
         d = _call(Settings(), name, args)
         assert d["status"] == "refused" and "ADSB_POLL_SECONDS" in d["advice"]
+
+
+def test_coverage_gap_reopens_the_same_pass(settings):
+    tr = Tracker(settings, connect(settings.db_path))
+    run(tr, snap(1000, ac("e80011", 10, 17500)), snap(1015, ac("e80011", 9, 17500)),
+        snap(1200))                                       # gone > grace: closed (overflight, for now)
+    assert rows(settings)[0]["open"] == 0
+    run(tr, snap(1300, ac("e80011", 20, 14000, -1300)))   # back after a 285 s gap (< merge window)
+    (r,) = rows(settings)
+    assert r["open"] == 1 and r["outcome"] is None and r["points"] == 3
+
+
+def test_a_late_return_is_a_new_pass(settings):
+    tr = Tracker(settings, connect(settings.db_path))
+    run(tr, snap(1000, ac("e80012", 10, 35000)), snap(1200), snap(2000, ac("e80012", 10, 35000)))
+    assert [r["open"] for r in rows(settings)] == [0, 1]   # 1000 s later (> 600 s merge window): new visit
+
+
+def test_a_landed_pass_is_never_reopened(settings):
+    tr = Tracker(settings, connect(settings.db_path))
+    run(tr, snap(1000, ac("e80013", 15, 12000, -1000)), snap(1060, ac("e80013", 0.5, "ground")),
+        snap(1300), snap(1400, ac("e80013", 3, 9000, 2000)))   # quick turnaround: a new (departure) pass
+    r = rows(settings)
+    assert len(r) == 2 and r[0]["outcome"] == "arrival" and r[1]["departure"] == 1

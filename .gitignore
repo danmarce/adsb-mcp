@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 data/
+
+# local MCP client config (may hold a URL/token for the live server)
+.mcp.json

@@ -38,6 +38,12 @@ class Settings:
     # "overhead" with real distances/bearings. Never echoed in tool results.
     site_lat: float | None = field(default_factory=lambda: _opt_float("ADSB_SITE_LAT"))
     site_lon: float | None = field(default_factory=lambda: _opt_float("ADSB_SITE_LON"))
+    # Off (default) = "approximate location", like a phone's location permission: when distances are measured
+    # from the site, aircraft_overhead rounds positions / distance / bearing so one result doesn't give the
+    # site away. On = exact values. (Many intercepted results could still narrow it down — this makes it
+    # hard, not impossible.)
+    exact_location: bool = field(default_factory=lambda: os.environ.get("ADSB_EXACT_LOCATION", "").strip().lower()
+                                 in ("1", "true", "yes", "on"))
     # The nearby airport: an approximate, public reference point when the site isn't given, and the target
     # for arrival / landing / go-around tracking (which also needs the field elevation).
     airport_icao: str | None = field(default_factory=lambda: (os.environ.get("ADSB_AIRPORT_ICAO") or "").strip().upper() or None)
@@ -53,6 +59,8 @@ class Settings:
     pass_radius_km: float = field(default_factory=lambda: _float("ADSB_PASS_RADIUS_KM", 50))
     # Close a pass once the aircraft has been gone (or out of the zone) this long.
     pass_grace_s: float = field(default_factory=lambda: _float("ADSB_PASS_GRACE_SECONDS", 90))
+    # An aircraft back within this long of its pass closing continues that pass (coverage gaps don't split).
+    pass_merge_s: float = field(default_factory=lambda: _float("ADSB_PASS_MERGE_SECONDS", 600))
     # ...but an aircraft lost while on approach is kept open this long: it's presumably landing below coverage.
     arrival_grace_s: float = field(default_factory=lambda: _float("ADSB_ARRIVAL_GRACE_SECONDS", 900))
     approach_km: float = field(default_factory=lambda: _float("ADSB_APPROACH_KM", 30))

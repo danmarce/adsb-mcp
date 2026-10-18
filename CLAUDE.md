@@ -28,6 +28,13 @@ and public). The star query: *"¿qué avión es ese?"*
 - **Receiver location is home-location PII.** `ADSB_SITE_LAT/LON` come from the environment (secret store at
   deploy), **never** hardcoded, **never echoed** in a result (the old `observer` field was removed for this),
   and **never stored** (the DB holds distances, not coordinates). Results say `reference: {"kind": "site"}`.
+- **Approximate location by default** (`ADSB_EXACT_LOCATION` off), Daniel's call, like a phone's "approximate
+  location" permission: when measuring from the site, `aircraft_overhead` rounds aircraft lat/lon to 2
+  decimals, distance to whole km and bearing to 10°, because an exact position plus an exact distance and
+  bearing locates the site from ONE result. The operator opts in to exact. It makes the site hard, not
+  impossible — many collected results could still narrow it down; that's accepted. Airport-referenced
+  results stay exact (public place). `find_aircraft` / `aircraft_near` return exact positions but no
+  site-relative numbers.
 - **The airport is the fallback reference point.** Someone who won't give an exact site can set the nearby
   airport (`ADSB_AIRPORT_*`, public — fine to echo its ICAO): distances and passes are measured from it.
   With neither site nor airport, the live tools still work (no distances) but **passes can't be tracked**,
@@ -41,7 +48,9 @@ and public). The star query: *"¿qué avión es ese?"*
 - **One row per PASS, not per poll.** A pass opens when an airborne aircraft is inside the zone (within
   `ADSB_PASS_RADIUS_KM` of the reference, or on approach to the airport); while open, every snapshot it
   appears in updates it, so the exit is captured; it closes after `ADSB_PASS_GRACE_SECONDS` gone or out of
-  the zone. Grounded aircraft never open a pass (a parked aircraft with its transponder on would otherwise
+  the zone. An aircraft back within `ADSB_PASS_MERGE_SECONDS` (600) **reopens** its last pass — seen live:
+  an A320 descending around the city lost coverage for ~170 s and was split into an "overflight" plus a new
+  pass. A confirmed landing is never reopened (the next flight is new). Grounded aircraft never open a pass (a parked aircraft with its transponder on would otherwise
   be one endless pass).
 - **Arrivals are tracked past the end of coverage.** A receiver usually loses arrivals
   before the runway. An aircraft lost **on approach** is held open `ADSB_ARRIVAL_GRACE_SECONDS` and closes

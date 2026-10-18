@@ -38,6 +38,7 @@ uv run pytest                # no network: the feeder is faked
 |---|---|---|
 | `ADSB_URL` | `http://localhost:8080/data/aircraft.json` | Your feeder's live snapshot (readsb / tar1090 path). |
 | `ADSB_SITE_LAT` / `ADSB_SITE_LON` | — | Receiver location: the exact reference point. **Home-location PII — from a secret store, never committed, never echoed in results.** |
+| `ADSB_EXACT_LOCATION` | `false` | Off = approximate location: when distances are from the site, `aircraft_overhead` rounds positions (~1 km), distance (whole km) and bearing (10°). `true` = exact values. |
 | `ADSB_AIRPORT_ICAO` / `ADSB_AIRPORT_LAT` / `ADSB_AIRPORT_LON` | — | The nearby airport (e.g. `EGLL`). An approximate, public reference point when the site isn't set. |
 | `ADSB_AIRPORT_ELEV_FT` | — | Field elevation. With the airport position, turns on arrival / go-around / departure tracking. |
 | `ADSB_MCP_TOKEN` | — | Bearer required on streamable-http when set. |
@@ -46,6 +47,7 @@ uv run pytest                # no network: the feeder is faked
 | `ADSB_DB` | `data/adsb.db` | SQLite store of passes (`/data/adsb.db` in the image). |
 | `ADSB_PASS_RADIUS_KM` | `50` | A pass = an airborne aircraft within this radius of the reference point, or on approach to the airport. |
 | `ADSB_PASS_GRACE_SECONDS` | `90` | Close a pass after the aircraft has been gone, or out of the zone, this long. |
+| `ADSB_PASS_MERGE_SECONDS` | `600` | An aircraft back within this long of its pass closing continues that pass, so a coverage gap doesn't split one visit in two. |
 | `ADSB_ARRIVAL_GRACE_SECONDS` | `900` | An aircraft lost **on approach** stays open this long (it's presumably landing below coverage). |
 | `ADSB_APPROACH_KM` | `30` | How far from the airport a descent counts as an approach. |
 | `ADSB_TZ` | `UTC` | IANA zone for local times and hour-of-day stats (e.g. `Europe/London`). |
@@ -63,7 +65,9 @@ With the airport elevation set, each pass also gets an **outcome**: `arrival` (s
 `ADSB_ARRIVAL_GRACE_SECONDS`), `go_around`, `departure` or `overflight`, plus a `go_arounds` count. The
 heuristics are simple and documented in [`passes.py`](src/adsb_mcp/passes.py).
 
-A failed poll never closes a pass, and open passes are written through, so a restart resumes them. With
+A failed poll never closes a pass, and open passes are written through, so a restart resumes them. An
+aircraft that drops out of coverage briefly (a hold, a turn behind terrain) continues its pass when it
+comes back within `ADSB_PASS_MERGE_SECONDS`; a confirmed landing always ends the pass. With
 neither a site nor an airport, passes can't be tracked and the recorder stays off.
 
 ### Claude Desktop / Claude Code (stdio)
@@ -106,9 +110,12 @@ private network, for example behind [mcpo](https://github.com/open-webui/mcpo). 
 is **no OAuth, no users and no audit log**, by design. To publish it more widely, put a management layer in
 front of it: an MCP gateway or auth proxy that handles OAuth, users and audit for all your servers at once.
 `ADSB_SITE_LAT/LON` is your home location. It is never echoed in a result, and the store holds distances,
-not coordinates. Distances and bearings to aircraft whose positions are also returned still let a
-determined caller work it out, so expose the server only to callers you trust with that. If that matters,
-set only the airport: results are then measured from a public place.
+not coordinates. An exact aircraft position next to an exact distance and bearing would give the site away
+in a single result, so by default `aircraft_overhead` gives an **approximate location**, like choosing
+"approximate" in a phone's location permission: still good for "about 12 km to the south". Set
+`ADSB_EXACT_LOCATION=true` to get exact values. This makes the site hard to find, not impossible: someone
+who collects many results can still narrow it down. If that matters, set only the airport, so results are
+measured from a public place.
 
 ## AI assistance
 

@@ -52,6 +52,11 @@ or "error" (the receiver is unreachable — `kind`+`detail`; not something a rew
 
 GROUP_BY = ("airframe", "callsign", "type", "outcome", "hour")
 
+# "Approximate location" for aircraft_overhead (ADSB_EXACT_LOCATION off): enough for "about 12 km to the
+# south", too coarse for one result to pinpoint the site. 2 decimals ≈ 1.1 km.
+APPROX_DEC = 2
+APPROX_BEARING = 10
+
 # One SELECT per grouping (all GROUP BY the key; `first`/`last` are reshaped into local times).
 _GROUP_SQL = {
     "airframe": ("hex", "SELECT hex, MAX(reg) AS registration, MAX(type) AS type, COUNT(*) AS passes, "
@@ -113,6 +118,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
         """Aircraft currently in range of the receiver, nearest first. The "what's that plane overhead
         right now" query. Distances/bearings are from the receiver location if configured, else from the
         nearby airport (approximate); with neither, results are listed newest-position-first, no distance.
+        `precision` says whether positions/distances are exact or rounded (~1 km, 10°) to protect the site.
 
         Args:
             max_results: cap on aircraft returned (default 10).
@@ -123,17 +129,31 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
         except FeederError as e:
             return _error("feeder", str(e))
         acs = _positioned(snap["aircraft"], include_grounded)
+        # Approximate unless the operator opted in: only the site needs hiding (the airport is public).
+        approximate = bool(ref) and ref[0] == "site" and not settings.exact_location
         if ref:
             lat, lon = ref[1]
             for a in acs:
-                a["distance_km"] = round(haversine_km(lat, lon, a["lat"], a["lon"]), 1)
-                a["bearing_deg"] = round(bearing_deg(lat, lon, a["lat"], a["lon"]))
+                a["distance_km"] = haversine_km(lat, lon, a["lat"], a["lon"])
+                a["bearing_deg"] = bearing_deg(lat, lon, a["lat"], a["lon"])
             acs.sort(key=lambda a: a["distance_km"])
+            for a in acs:
+                if approximate:
+                    a["lat"], a["lon"] = round(a["lat"], APPROX_DEC), round(a["lon"], APPROX_DEC)
+                    a["distance_km"] = max(1, round(a["distance_km"]))
+                    a["bearing_deg"] = round(a["bearing_deg"] / APPROX_BEARING) * APPROX_BEARING % 360
+                else:
+                    a["distance_km"] = round(a["distance_km"], 1)
+                    a["bearing_deg"] = round(a["bearing_deg"])
         else:
             acs.sort(key=lambda a: (a["seen_pos_s"] is None, a["seen_pos_s"] or 0))
         out = {"status": "ok", "source": "adsb", "snapshot_age_s": round(age, 1), "reference": _reference(),
-               "site_configured": settings.site is not None, "count": len(acs),
+               "site_configured": settings.site is not None,
+               "precision": "approximate" if approximate else "exact", "count": len(acs),
                "aircraft": acs[:max(1, max_results)]}
+        if approximate:
+            out["precision_note"] = ("approximate location: positions rounded to ~1 km, distance to whole km, "
+                                     f"bearing to {APPROX_BEARING}°")
         if ref and ref[0] == "airport":
             out["note"] = f"distances are from the airport {settings.airport_icao or ''} (approximate), not the receiver."
         elif not ref:

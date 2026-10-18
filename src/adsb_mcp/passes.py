@@ -3,7 +3,9 @@
 A pass opens when an airborne aircraft is inside the zone — within `pass_radius_km` of the reference point
 (the site, else the airport), or on approach to the airport. While it's open, every snapshot the aircraft
 appears in updates it (altitudes, closest approach, RSSI), so the exit is captured too. It closes once the
-aircraft has been gone, or out of the zone, for `pass_grace_s`.
+aircraft has been gone, or out of the zone, for `pass_grace_s`. If it comes back within `pass_merge_s` of
+closing, that pass is reopened (a coverage gap must not split one visit) — unless it ended with a confirmed
+landing.
 
 Arrival tracking (needs the airport position + field elevation). ADS-B coverage usually ends before the
 runway, so an aircraft lost while ON APPROACH is kept open for `arrival_grace_s`: it's presumably landing.
@@ -132,10 +134,12 @@ class Tracker:
             if p is None:
                 if not in_zone:
                     continue  # parked / far / position-less: nothing to open
-                p = Pass(hex=hx, first_seen=t, last_seen=t, last_in_zone=t, reference=self.ref_kind)
-                if (agl is not None and d_ap <= DEPARTURE_KM and agl <= DEPARTURE_AGL
-                        and vr is not None and vr >= DEPARTURE_CLIMB_FPM):
-                    p.departure = 1
+                p = self._reopen(hx, t)
+                if p is None:
+                    p = Pass(hex=hx, first_seen=t, last_seen=t, last_in_zone=t, reference=self.ref_kind)
+                    if (agl is not None and d_ap <= DEPARTURE_KM and agl <= DEPARTURE_AGL
+                            and vr is not None and vr >= DEPARTURE_CLIMB_FPM):
+                        p.departure = 1
                 self.open[hx] = p
 
             p.last_seen = max(p.last_seen, t)
@@ -158,6 +162,19 @@ class Tracker:
 
         self._close_stale(now)
         self._write()
+
+    def _reopen(self, hx: str, t: float) -> Pass | None:
+        """The aircraft is back after a coverage gap: if its last pass closed recently, continue that pass
+        instead of starting a new one (a hold or a turn behind terrain must not split one visit in two).
+        A pass that ended on the ground (confirmed landing) is never reopened: the next flight is new."""
+        row = self.conn.execute("SELECT * FROM passes WHERE hex = ? AND open = 0 AND landed_at IS NULL "
+                                "ORDER BY last_seen DESC LIMIT 1", (hx,)).fetchone()
+        if row is None or t - row["last_seen"] > self.s.pass_merge_s:
+            return None
+        p = Pass(**{k: row[k] for k in row.keys()})
+        p.open, p.outcome = 1, None       # the outcome is decided again when it closes
+        log.info("reopened pass %d for %s after a %.0f s gap", p.id, hx, t - p.last_seen)
+        return p
 
     def _arrival(self, p: Pass, t: float, ground: bool, d_ap: float, agl: float | None,
                  vr: float | None, approaching: bool) -> None:
