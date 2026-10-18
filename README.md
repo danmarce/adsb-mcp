@@ -131,6 +131,11 @@ Everything on the board is measured from the **airport**, a public place, and ai
 out, so it carries nothing about the receiver's location. That's why it's served without the bearer by
 default (a wall panel or an iframe can't send one); set `ADSB_BOARD=token` or `off` to change that.
 
+**Full screen on a phone or tablet:** tap the *Full screen* button (Android Chrome, iPad), or use *Add to
+Home Screen*. The board ships a manifest, so it then opens without browser bars; on iPhone that's the only
+way. Android installs it as an app only over https, and keeping the screen awake (Wake Lock) also needs
+https; over plain http, use the device's stay-awake setting or a kiosk browser app.
+
 In Home Assistant, add a Webpage card with the `/board` URL. If the dashboard is served over https, serve
 the board over https too, or the browser blocks the frame.
 

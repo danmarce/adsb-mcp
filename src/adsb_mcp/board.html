@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#08090b">
+<!-- Home-screen app: opens without browser bars (iPhone: the only way to full screen). -->
+<link rel="manifest" href="board.webmanifest">
+<link rel="apple-touch-icon" href="board-icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flight board">
 <title>Flight board</title>
 <!--
   adsb-mcp FIDS board. One self-contained file: no build, no dependencies, no external fonts.
@@ -91,6 +98,12 @@
   @keyframes blink { 50% { opacity: 0.35; } }
   @media (prefers-reduced-motion: reduce) { td.flip, tr.emergency td, header .live.down .dot { animation: none; } }
 
+  /* Full-screen button: shown only where the browser can do it; fades after a few seconds, a tap brings it back. */
+  #fs { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom));
+        z-index: 10; font: inherit; font-size: 0.8em; letter-spacing: 0.12em; color: var(--bg); background: var(--text);
+        border: 0; border-radius: 6px; padding: 0.6em 0.9em; cursor: pointer; transition: opacity 0.6s; }
+  #fs[hidden] { display: none; }
+  #fs.idle { opacity: 0.12; }
   .banner { color: var(--warn); font-size: 0.8em; padding: 0.5em 0.6em; border: 1px dashed var(--warn); border-radius: 6px; }
   .banner[hidden] { display: none; }
   footer { color: var(--label); font-size: 0.55em; letter-spacing: 0.12em; display: flex; justify-content: space-between; gap: 1em; }
@@ -115,6 +128,7 @@
 <div class="banner" id="banner" hidden></div>
 <main id="main"></main>
 <footer><span id="foot1"></span><span id="foot2"></span></footer>
+<button id="fs" type="button" hidden>⛶ Full screen</button>
 
 <script>
 (() => {
@@ -267,6 +281,39 @@
   poll();
   setInterval(poll, INTERVAL);
   setInterval(setLive, 1000);
+
+  // Full screen (Fullscreen API: Android Chrome, iPad, desktop — not iPhone, where Add to Home Screen is the way).
+  const fsBtn = document.getElementById("fs");
+  const root = document.documentElement;
+  const canFs = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+  const standalone = matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches || navigator.standalone;
+  const isFs = () => document.fullscreenElement || document.webkitFullscreenElement;
+  fsBtn.textContent = LANG === "es" ? "⛶ Pantalla completa" : "⛶ Full screen";
+  let idleTimer;
+  function showFs() {
+    fsBtn.hidden = !canFs || standalone || !!isFs();
+    fsBtn.classList.remove("idle");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => fsBtn.classList.add("idle"), 4000);
+  }
+  fsBtn.addEventListener("click", () => {
+    const req = root.requestFullscreen ? root.requestFullscreen({ navigationUI: "hide" }) : root.webkitRequestFullscreen?.();
+    Promise.resolve(req).then(() => screen.orientation?.lock?.("any")).catch(() => {});
+  });
+  document.addEventListener("fullscreenchange", showFs);
+  document.addEventListener("webkitfullscreenchange", showFs);
+  document.addEventListener("pointerdown", showFs);
+  showFs();
+
+  // Keep the screen on (Screen Wake Lock: browsers allow it over https only; over http use a kiosk app).
+  let lock = null;
+  async function wake() {
+    if (!("wakeLock" in navigator) || !isSecureContext || document.visibilityState !== "visible" || lock) return;
+    try { lock = await navigator.wakeLock.request("screen"); lock.addEventListener("release", () => { lock = null; }); }
+    catch (e) { /* denied (battery saver etc.): nothing to do */ }
+  }
+  document.addEventListener("visibilitychange", wake);
+  wake();
 })();
 </script>
 </body>

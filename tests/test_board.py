@@ -121,3 +121,21 @@ def test_board_without_airport_refuses(settings, monkeypatch):
         monkeypatch.delenv(k)
     d = asyncio.run(_get(_gate(Settings(), monkeypatch), "/board.json")).json()
     assert d["status"] == "refused" and "ADSB_AIRPORT_LAT" in d["advice"]
+
+
+def test_home_screen_manifest_and_icons(settings, monkeypatch):
+    import struct
+    app = _gate(settings, monkeypatch)
+    for base in ("", "/board"):                      # the page's relative links work at /board and /board/
+        m = asyncio.run(_get(app, f"{base}/board.webmanifest"))
+        assert m.status_code == 200 and m.headers["content-type"] == "application/manifest+json"
+        doc = m.json()
+        assert doc["display"] == "fullscreen" and doc["start_url"] == "board" and doc["short_name"] == "SEQM"
+        for icon in doc["icons"]:
+            png = asyncio.run(_get(app, f"{base}/{icon['src']}"))
+            assert png.status_code == 200 and png.content[:8] == b"\x89PNG\r\n\x1a\n"
+            w, h = struct.unpack(">II", png.content[16:24])
+            assert f"{w}x{h}" == icon["sizes"]
+    page = asyncio.run(_get(app, "/board")).text
+    assert 'rel="manifest" href="board.webmanifest"' in page and "apple-mobile-web-app-capable" in page
+    assert "requestFullscreen" in page and "wakeLock" in page
