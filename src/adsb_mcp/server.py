@@ -354,28 +354,41 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
 
 import hmac  # noqa: E402
 
+from .board import PATHS as BOARD_PATHS  # noqa: E402
+
 
 class BearerAuth:
     """ASGI gate for streamable-http:
       * /healthz        — always open (Docker healthcheck).
+      * /board, /board.json — the FIDS board (`board`), open when ADSB_BOARD=open (it's airport-referenced:
+                          no site PII), else behind the bearer like everything else.
       * everything else — the MCP app, requiring `Authorization: Bearer <token>` when a token is set.
     """
 
-    def __init__(self, app, settings: Settings) -> None:
+    def __init__(self, app, settings: Settings, board=None) -> None:
         self.app = app
         self.settings = settings
+        self.board = board
         self.expected = f"Bearer {settings.http_token}".encode() if settings.http_token else None
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "http":
-            if scope["path"] == "/healthz":
+            path = scope["path"]
+            if path == "/healthz":
                 await _respond(send, 200, b"ok")
+                return
+            is_board = self.board is not None and path in BOARD_PATHS
+            if is_board and self.board.public:
+                await self.board(scope, receive, send)
                 return
             if self.expected is not None:
                 got = dict(scope["headers"]).get(b"authorization", b"")
                 if not hmac.compare_digest(got, self.expected):
                     await _respond(send, 401, b"unauthorized")
                     return
+            if is_board:
+                await self.board(scope, receive, send)
+                return
         await self.app(scope, receive, send)
 
 

@@ -50,6 +50,34 @@ DEPARTURE_AGL = 3_000
 DEPARTURE_CLIMB_FPM = 300
 
 
+# --- airport geometry, shared by the recorder and the board ---------------------------------------------
+
+def fresh_position(a: dict[str, Any]) -> bool:
+    return (a["lat"] is not None and a["lon"] is not None
+            and a["seen_pos_s"] is not None and a["seen_pos_s"] <= MAX_POS_AGE_S)
+
+
+def airport_frame(a: dict[str, Any], s: Settings) -> tuple[float | None, float | None]:
+    """(distance to the airport km, height above the field ft) — None where unknown or arrivals are off."""
+    if not s.arrivals_enabled or not fresh_position(a):
+        return None, None
+    d_ap = haversine_km(s.airport_lat, s.airport_lon, a["lat"], a["lon"])
+    alt = a["altitude_ft"]
+    agl = alt - s.airport_elev_ft if alt is not None and not a["on_ground"] else None
+    return d_ap, agl
+
+
+def on_approach(d_ap: float | None, agl: float | None, vr: float | None, s: Settings) -> bool:
+    return (agl is not None and d_ap <= s.approach_km and agl <= APPROACH_CEILING_AGL
+            and vr is not None and vr <= APPROACH_DESCENT_FPM)
+
+
+def climbing_out(d_ap: float | None, agl: float | None, vr: float | None, s: Settings) -> bool:
+    """Climbing away from the airport area (the board's departures; not the recorder's first-seen rule)."""
+    return (agl is not None and d_ap <= s.approach_km and agl <= APPROACH_CEILING_AGL
+            and vr is not None and vr >= DEPARTURE_CLIMB_FPM)
+
+
 @dataclass
 class Pass:
     hex: str
@@ -110,24 +138,18 @@ class Tracker:
     def ingest(self, snap: dict[str, Any]) -> None:
         now = float(snap.get("now") or time.time())
         s = self.s
-        arrivals = s.arrivals_enabled
         for a in snap["aircraft"]:
             hx = a["hex"]
             if not hx:
                 continue
             t = now - (a["seen_s"] or 0)
-            has_pos = (a["lat"] is not None and a["lon"] is not None
-                       and a["seen_pos_s"] is not None and a["seen_pos_s"] <= MAX_POS_AGE_S)
+            has_pos = fresh_position(a)
             ground = a["on_ground"]
             alt = a["altitude_ft"]
             vr = a["vertical_rate_fpm"]
             d_ref = haversine_km(self.ref[0], self.ref[1], a["lat"], a["lon"]) if has_pos else None
-            d_ap = agl = None
-            if arrivals and has_pos:
-                d_ap = haversine_km(s.airport_lat, s.airport_lon, a["lat"], a["lon"])
-                agl = alt - s.airport_elev_ft if alt is not None and not ground else None
-            approaching = (agl is not None and d_ap <= s.approach_km and agl <= APPROACH_CEILING_AGL
-                           and vr is not None and vr <= APPROACH_DESCENT_FPM)
+            d_ap, agl = airport_frame(a, s)
+            approaching = on_approach(d_ap, agl, vr, s)
             in_zone = has_pos and not ground and (d_ref <= s.pass_radius_km or approaching)
 
             p = self.open.get(hx)

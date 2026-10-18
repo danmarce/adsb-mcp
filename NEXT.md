@@ -35,6 +35,10 @@ repo, never here.
 
 ## The ambient FIDS board — `board.json` + `board.html` (the "something interesting"; Daniel, 2026-10-17)
 
+**Built** (2026-10-18): `/board` + `/board.json` as below, `ADSB_BOARD=open|token|off`, `ADSB_AIRPORT_NAME`,
+`?lang=es`, `?interval=`, `?sections=`. Arrivals include held (`arrival_presumed`) and `landed` rows from the
+store. Still open: the HA RESTful-sensor idea under *Later*, and checking it on the real wall device.
+
 An **airport arrivals / FIDS board**: an ambient display of what's overhead and arriving, to run on an old
 phone/tablet on a wall **and** embedded in Home Assistant. Minimal, **client-side render**, one data source.
 

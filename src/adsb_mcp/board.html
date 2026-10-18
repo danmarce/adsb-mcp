@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#08090b">
+<title>Flight board</title>
+<!--
+  adsb-mcp FIDS board. One self-contained file: no build, no dependencies, no external fonts.
+  Polls ./board.json and renders client-side. Query options:
+    ?lang=es        Spanish labels (default English)
+    ?interval=8     seconds between polls (default 8, min 3)
+    ?sections=arr,ovh,dep,rec   which panels to show, in order (default all)
+-->
+<style>
+  :root {
+    --bg: #08090b;
+    --panel: #101216;
+    --cell: #16191e;
+    --line: #23272e;
+    --text: #f1c232;        /* FIDS amber */
+    --dim: #8a7a45;
+    --label: #9aa3ad;
+    --ok: #4fd38a;
+    --info: #63b3ff;
+    --warn: #ff9f43;
+    --bad: #ff5d5d;
+    --fs: clamp(12px, 0.9vw + 0.9vh, 30px);
+    --gap: clamp(6px, 1vmin, 14px);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body {
+    color: var(--text);
+    font: 600 var(--fs)/1.25 ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    display: flex; flex-direction: column;
+    padding: var(--gap);
+    padding: max(var(--gap), env(safe-area-inset-top)) max(var(--gap), env(safe-area-inset-right))
+             max(var(--gap), env(safe-area-inset-bottom)) max(var(--gap), env(safe-area-inset-left));
+    gap: var(--gap);
+    overflow: hidden;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 0.8em; flex-wrap: wrap;
+    border-bottom: 2px solid var(--line); padding-bottom: calc(var(--gap) * 0.6);
+  }
+  header .icao { font-size: 1.6em; letter-spacing: 0.12em; }
+  header .name { color: var(--label); font-size: 0.8em; flex: 1; min-width: 0;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header .clock { font-size: 1.6em; font-variant-numeric: tabular-nums; }
+  header .live { font-size: 0.65em; color: var(--label); display: flex; align-items: center; gap: 0.4em; }
+  header .dot { width: 0.7em; height: 0.7em; border-radius: 50%; background: var(--ok); }
+  header .live.stale .dot { background: var(--warn); }
+  header .live.down .dot { background: var(--bad); animation: blink 1s steps(2) infinite; }
+
+  main { flex: 1; min-height: 0; display: grid; gap: var(--gap); grid-auto-rows: minmax(0, auto); align-content: start; }
+  /* Landscape wall panel: arrivals + departures left, overhead right, recent across the bottom. */
+  @media (min-aspect-ratio: 5/4) and (min-width: 760px) {
+    main { grid-template-columns: 1fr 1fr; grid-template-areas: "arr ovh" "dep ovh" "rec rec"; }
+    #arr { grid-area: arr; } #ovh { grid-area: ovh; } #dep { grid-area: dep; } #rec { grid-area: rec; }
+  }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; min-height: 0;
+            overflow: hidden; display: flex; flex-direction: column; container-type: inline-size; }
+  section h2 { margin: 0; padding: 0.35em 0.6em; font-size: 0.85em; letter-spacing: 0.18em;
+               color: var(--bg); background: var(--text); display: flex; justify-content: space-between; }
+  section h2 .count { opacity: 0.7; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0 0.18em; padding: 0 0.4em 0.3em; table-layout: auto; }
+  th { color: var(--label); font-size: 0.62em; font-weight: 600; letter-spacing: 0.14em; text-align: left;
+       padding: 0.5em 0.45em 0.1em; white-space: nowrap; }
+  td { background: var(--cell); padding: 0.22em 0.45em; white-space: nowrap; overflow: hidden;
+       text-overflow: ellipsis; max-width: 12em; font-variant-numeric: tabular-nums; }
+  td:first-child { border-radius: 3px 0 0 3px; } td:last-child { border-radius: 0 3px 3px 0; }
+  td.num, th.num { text-align: right; }
+  td.sub { color: var(--dim); font-size: 0.8em; }
+  tr.empty td { background: none; color: var(--dim); text-align: center; letter-spacing: 0.3em; }
+  .st-approaching { color: var(--text); }
+  .st-arrival_presumed { color: var(--info); }
+  .st-landed, .st-departing, .st-arrival, .st-departure { color: var(--ok); }
+  .st-go_around { color: var(--warn); }
+  .st-overflight, .st-arrival_presumed-done { color: var(--label); }
+  tr.emergency td { background: #3a1214; color: var(--bad); animation: blink 1.2s steps(2) infinite; }
+  .up { color: var(--ok); } .down { color: var(--info); }
+  .arrow { display: inline-block; transition: transform 0.6s; }
+
+  /* Split-flap: a changed cell flips once. */
+  td.flip { animation: flip 0.45s ease-out; transform-origin: 50% 50%; }
+  @keyframes flip { 0% { transform: rotateX(90deg); filter: brightness(1.8); } 100% { transform: none; } }
+  @keyframes blink { 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { td.flip, tr.emergency td, header .live.down .dot { animation: none; } }
+
+  .banner { color: var(--warn); font-size: 0.8em; padding: 0.5em 0.6em; border: 1px dashed var(--warn); border-radius: 6px; }
+  .banner[hidden] { display: none; }
+  footer { color: var(--label); font-size: 0.55em; letter-spacing: 0.12em; display: flex; justify-content: space-between; gap: 1em; }
+
+  /* Drop low-priority columns as the space shrinks (half-width panel, phone portrait, a small Home Assistant
+     card). Container queries size by the panel itself; the viewport rules are the fallback for old tablets. */
+  @media (max-width: 760px) { .p3 { display: none; } }
+  @media (max-width: 520px) { .p2 { display: none; } header .name, footer { display: none; } }
+  @container (max-width: 34em) { .p3 { display: none; } }
+  @container (max-width: 24em) { .p2 { display: none; } }
+  @media (max-height: 420px) and (max-width: 759px) { #rec, #dep { display: none; } }
+  @media (max-height: 300px) { footer, header .name, header .live span { display: none; } #rec { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="icao" id="icao">----</span>
+  <span class="name" id="name"></span>
+  <span class="live" id="live"><i class="dot"></i><span id="livetxt">…</span></span>
+  <span class="clock" id="clock">--:--</span>
+</header>
+<div class="banner" id="banner" hidden></div>
+<main id="main"></main>
+<footer><span id="foot1"></span><span id="foot2"></span></footer>
+
+<script>
+(() => {
+  "use strict";
+  const params = new URLSearchParams(location.search);
+  const LANG = (params.get("lang") || navigator.language || "en").slice(0, 2) === "es" ? "es" : "en";
+  const INTERVAL = Math.max(3, Number(params.get("interval")) || 8) * 1000;
+  const SECTIONS = (params.get("sections") || "arr,ovh,dep,rec").split(",").map(s => s.trim()).filter(Boolean);
+
+  const T = {
+    en: { arr: "Arrivals", dep: "Departures", ovh: "Overhead", rec: "Recent",
+          flight: "Flight", type: "Type", status: "Status", alt: "Alt", dist: "Dist", eta: "ETA", vs: "V/S",
+          spd: "Spd", reg: "Reg", time: "Time", result: "Result", low: "Lowest", none: "No traffic", live: "Live",
+          stale: "Stale", offline: "Offline", min: "min",
+          st: { approaching: "On approach", arrival_presumed: "Landing", landed: "Landed", departing: "Departing" },
+          out: { arrival: "Landed", arrival_presumed: "Landed", go_around: "Go-around", departure: "Departed",
+                 overflight: "Overflew" },
+          foot: "Local ADS-B receiver", rad: "radius" },
+    es: { arr: "Llegadas", dep: "Salidas", ovh: "Sobrevolando", rec: "Recientes",
+          flight: "Vuelo", type: "Tipo", status: "Estado", alt: "Alt", dist: "Dist", eta: "ETA", vs: "V/S",
+          spd: "Vel", reg: "Matr", time: "Hora", result: "Resultado", low: "Mín", none: "Sin tráfico", live: "En vivo",
+          stale: "Desactualizado", offline: "Sin conexión", min: "min",
+          st: { approaching: "En aproximación", arrival_presumed: "Aterrizando", landed: "Aterrizó", departing: "Despegando" },
+          out: { arrival: "Aterrizó", arrival_presumed: "Aterrizó", go_around: "Motor y al aire", departure: "Despegó",
+                 overflight: "Sobrevoló" },
+          foot: "Receptor ADS-B local", rad: "radio" },
+  }[LANG];
+  document.documentElement.lang = LANG;
+
+  const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const compass = d => d == null ? "" : COMPASS[Math.round(d / 22.5) % 16].replace(/W/g, LANG === "es" ? "O" : "W");
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const flight = r => r.callsign || (r.hex || "").toUpperCase() || "—";
+  const alt = ft => ft == null ? "—" : ft >= 18000 ? "FL" + String(Math.round(ft / 100)).padStart(3, "0")
+                                                   : Math.round(ft).toLocaleString(LANG === "es" ? "es-EC" : "en-US");
+  const dist = (km, brg) => km == null ? "—" : `${km < 10 ? km.toFixed(1) : Math.round(km)} km ${compass(brg)}`.trim();
+  const vs = fpm => fpm == null || Math.abs(fpm) < 200 ? "—"
+                  : `<span class="${fpm > 0 ? "up" : "down"}">${fpm > 0 ? "▲" : "▼"} ${Math.abs(Math.round(fpm / 100) * 100)}</span>`;
+  const hhmm = iso => iso ? iso.slice(11, 16) : "—";
+
+  // column: [header, cell(row) -> html, className]
+  const COLS = {
+    arr: [[T.flight, flight], [T.type, r => esc(r.type || "—"), "p2"], [T.reg, r => esc(r.registration || ""), "p3 sub"],
+          [T.status, r => `<span class="st-${r.status}">${esc(T.st[r.status] || r.status)}</span>`],
+          [T.alt, r => alt(r.altitude_ft), "num p2"], [T.dist, r => r.distance_km == null ? "" : dist(r.distance_km), "num"],
+          [T.eta, r => r.eta_min != null ? `${r.eta_min} ${T.min}` : r.time ? hhmm(r.time) : "—", "num"]],
+    dep: [[T.flight, flight], [T.type, r => esc(r.type || "—"), "p2"], [T.reg, r => esc(r.registration || ""), "p3 sub"],
+          [T.alt, r => alt(r.altitude_ft), "num"], [T.dist, r => dist(r.distance_km), "num p2"],
+          [T.vs, r => vs(r.vertical_rate_fpm), "num"]],
+    ovh: [[T.flight, flight], [T.type, r => esc(r.type || "—")], [T.reg, r => esc(r.registration || ""), "p3 sub"],
+          [T.alt, r => alt(r.altitude_ft), "num"], [T.spd, r => r.ground_speed_kt == null ? "—" : Math.round(r.ground_speed_kt), "num p3"],
+          [T.vs, r => vs(r.vertical_rate_fpm), "num p2"], [T.dist, r => dist(r.distance_km, r.bearing_deg), "num"],
+          ["", r => r.track_deg == null ? "" : `<span class="arrow" style="transform:rotate(${Math.round(r.track_deg)}deg)">↑</span>`, "p2"]],
+    rec: [[T.time, r => hhmm(r.time), "num"], [T.flight, flight], [T.type, r => esc(r.type || "—"), "p2"],
+          [T.reg, r => esc(r.registration || ""), "p3 sub"],
+          [T.result, r => r.outcome ? `<span class="st-${r.outcome}">${esc(T.out[r.outcome] || r.outcome)}${r.go_arounds ? " ×" + r.go_arounds : ""}</span>` : "—"],
+          [T.low, r => alt(r.min_alt_ft), "num p3"]],
+  };
+  const DATA = { arr: d => d.arrivals, dep: d => d.departures, ovh: d => d.overhead, rec: d => d.recent };
+
+  const main = document.getElementById("main");
+  const prev = new Map();           // "section|row key|col" -> last text, for the flap effect
+  for (const id of SECTIONS) {
+    if (!COLS[id]) continue;
+    const s = document.createElement("section");
+    s.id = id;
+    s.innerHTML = `<h2><span>${esc(T[id])}</span><span class="count"></span></h2>
+      <table><thead><tr>${COLS[id].map(([h, , c]) => `<th class="${c || ""}">${esc(h)}</th>`).join("")}</tr></thead><tbody></tbody></table>`;
+    main.appendChild(s);
+  }
+
+  function render(d) {
+    for (const id of SECTIONS) {
+      const sec = document.getElementById(id);
+      if (!sec) continue;
+      const rows = (DATA[id](d) || []);
+      sec.querySelector(".count").textContent = rows.length || "";
+      const cols = COLS[id];
+      const tbody = sec.querySelector("tbody");
+      if (!rows.length) {
+        tbody.innerHTML = `<tr class="empty"><td colspan="${cols.length}">— ${esc(T.none)} —</td></tr>`;
+        continue;
+      }
+      tbody.innerHTML = rows.map((r, i) => {
+        const key = r.hex || i;
+        const em = r.emergency ? " class=\"emergency\"" : "";
+        return `<tr${em}>${cols.map(([, f, c], j) => {
+          const html = String(f(r));
+          const k = `${id}|${key}|${j}`;
+          const changed = prev.has(k) && prev.get(k) !== html;
+          prev.set(k, html);
+          return `<td class="${c || ""}${changed ? " flip" : ""}">${html}</td>`;
+        }).join("")}</tr>`;
+      }).join("");
+    }
+  }
+
+  // Clock in the board's time zone: take the UTC offset from the server's `now`, tick locally.
+  let offsetMin = -new Date().getTimezoneOffset();
+  function tick() {
+    const t = new Date(Date.now() + offsetMin * 60000);
+    document.getElementById("clock").textContent =
+      `${String(t.getUTCHours()).padStart(2, "0")}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
+  }
+  setInterval(tick, 1000); tick();
+
+  const live = document.getElementById("live"), livetxt = document.getElementById("livetxt");
+  const banner = document.getElementById("banner");
+  let lastOk = 0;
+  function setLive() {
+    const age = Date.now() - lastOk;
+    live.classList.toggle("stale", lastOk && age > INTERVAL * 3 && age <= INTERVAL * 8);
+    live.classList.toggle("down", !lastOk || age > INTERVAL * 8);
+    livetxt.textContent = !lastOk || age > INTERVAL * 8 ? T.offline : age > INTERVAL * 3 ? T.stale : T.live;
+    main.style.opacity = !lastOk || age > INTERVAL * 8 ? 0.45 : 1;
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("board.json", { cache: "no-store" });
+      const d = await res.json();
+      if (d.status !== "ok") {
+        banner.hidden = false;
+        banner.textContent = [d.reason || d.detail || d.kind, d.advice].filter(Boolean).join(" — ");
+      } else {
+        banner.hidden = true;
+        lastOk = Date.now();
+        const m = /([+-])(\d\d):(\d\d)$/.exec(d.now || "");
+        offsetMin = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+        document.getElementById("icao").textContent = d.airport?.icao || "ADS-B";
+        document.getElementById("name").textContent = d.airport?.name || "";
+        document.title = `${d.airport?.icao || "ADS-B"} · ${T.arr}`;
+        document.getElementById("foot1").textContent = T.foot;
+        document.getElementById("foot2").textContent = `${T.rad} ${d.radius_km} km · ${d.tz}`;
+        render(d);
+        tick();
+      }
+    } catch (e) { /* keep the last board; the live dot goes stale, then offline */ }
+    setLive();
+  }
+  poll();
+  setInterval(poll, INTERVAL);
+  setInterval(setLive, 1000);
+})();
+</script>
+</body>
+</html>

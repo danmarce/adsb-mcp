@@ -13,6 +13,8 @@ A thin MCP server over a **local ADS-B receiver's `aircraft.json`** (readsb / ta
 keyless, live, your OWN data). Two tiers:
 - **Live** — `aircraft_overhead`, `aircraft_near`, `find_aircraft`: what's in the air right now.
 - **History** (optional recorder) — `traffic_stats`, `aircraft_history`: one row per *pass*, kept over time.
+- **Board** — `GET /board` (one self-contained HTML page) + `GET /board.json`: an ambient FIDS display for a
+  wall panel or a Home Assistant iframe. Not an MCP tool; served by the same ASGI app beside `/healthz`.
 
 `ADSB_URL` points at the feeder's `aircraft.json` (default `http://localhost:8080/data/aircraft.json`); the
 real feeder host lives in the homelab repo's deploy config, never here (standard §6 — repo stays generic
@@ -70,6 +72,16 @@ and public). The star query: *"¿qué avión es ese?"*
   model here) would benefit.
 - **History tools when not recording → `refused`** with advice (a tier not enabled, not a fault). A stale
   recorder is flagged in every history result (`recorder.warning`) — never a silently thin answer.
+- **The board is airport-referenced so it can be open.** `/board.json` measures everything from the public
+  airport, omits aircraft positions and has nothing site-relative, so it carries no home-location PII and
+  is served WITHOUT the bearer by default (`ADSB_BOARD=open`): wall panels and HA iframes can't send
+  headers. `token` puts it behind the bearer, `off` removes it. If you add a field to the board, keep it
+  free of site-relative data or this choice no longer holds (a test checks for lat/lon and the site).
+- **Board = client-side render, no build, no deps.** The server only answers JSON + one static file
+  (`board.html`, packaged with the module); displays share one snapshot for ≥ 5 s (`Snapshots.get(
+  min_age_s)`), so N panels cost ~nothing. Responsive via container queries (each panel drops columns by
+  its own width) with viewport media queries as the fallback for old tablets. Its arrivals / departures use
+  the recorder's heuristics (`passes.airport_frame` / `on_approach` / `climbing_out`) — one definition.
 - **All five: four hints explicit**, **ok/refused/error** contract (receiver unreachable = error, never a
   silent empty list).
 
@@ -78,7 +90,8 @@ and public). The star query: *"¿qué avión es ese?"*
 `src/adsb_mcp/`: `config.py` (env settings, `reference` = site → airport → none), `feeder.py` (fetch +
 normalize aircraft.json, haversine/bearing, `Snapshots` cache — the MockTransport target), `passes.py`
 (`Tracker`: snapshots → passes + arrival heuristics; `poll_once`), `store.py` (SQLite schema, WAL, meta),
-`server.py` (tools + `BearerAuth`), `__init__.py` (`main()`, the recorder loop).
+`server.py` (tools + `BearerAuth`), `board.py` + `board.html` (the FIDS board), `__init__.py` (`main()`,
+the recorder loop).
 
 ## Tests
 
@@ -89,3 +102,6 @@ normalize aircraft.json, haversine/bearing, `Snapshots` cache — the MockTransp
 - `tests/test_passes.py` — the tracker on a synthetic feeder clock: one row per pass, parked aircraft,
   arrival / presumed / go-around (+ landing, + leaving) / departure, restart resume, outage never closes or
   splits, airport-only reference; the two history tools by name over the store it writes.
+- `tests/test_board.py` — `/board.json` content (approach / departure / overhead / emergency, held arrivals
+  and recent passes from the store, no positions or site), and open / token / off access through the real
+  `BearerAuth` gate (`httpx.ASGITransport`).

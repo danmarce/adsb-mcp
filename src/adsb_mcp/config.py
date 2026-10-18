@@ -50,6 +50,10 @@ class Settings:
     airport_lat: float | None = field(default_factory=lambda: _opt_float("ADSB_AIRPORT_LAT"))
     airport_lon: float | None = field(default_factory=lambda: _opt_float("ADSB_AIRPORT_LON"))
     airport_elev_ft: float | None = field(default_factory=lambda: _opt_float("ADSB_AIRPORT_ELEV_FT"))
+    airport_name: str | None = field(default_factory=lambda: (os.environ.get("ADSB_AIRPORT_NAME") or "").strip() or None)
+    # The FIDS board (/board, /board.json; streamable-http only). Airport-referenced, so no site PII:
+    # open = no bearer needed (wall panels / HA iframes can't send one), token = behind the bearer, off.
+    board: str = field(default_factory=lambda: (os.environ.get("ADSB_BOARD") or "open").strip().lower())
 
     # --- historical tier (the recorder) ---
     # >0 makes `serve` poll the feeder in the background and record passes. 0 = off (pure live tier).

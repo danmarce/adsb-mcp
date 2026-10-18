@@ -27,6 +27,7 @@ async def _poll_loop(settings: Settings, snapshots) -> None:
 
 
 async def _serve(settings: Settings, transport: str, host: str, port: int) -> None:
+    from .board import Board
     from .feeder import FeederClient, Snapshots
     from .server import BearerAuth, build_server
 
@@ -52,7 +53,10 @@ async def _serve(settings: Settings, transport: str, host: str, port: int) -> No
 
         if not settings.http_token and host not in ("127.0.0.1", "localhost", "::1"):
             log.warning("serving on %s without ADSB_MCP_TOKEN - anyone on the network can call it", host)
-        app = BearerAuth(mcp.streamable_http_app(host=host), settings)
+        board = Board(settings, snapshots) if settings.board in ("open", "token") else None
+        if board and settings.airport is None:
+            log.warning("ADSB_BOARD is %s but no airport is set: /board.json will refuse", settings.board)
+        app = BearerAuth(mcp.streamable_http_app(host=host), settings, board)
         await uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info")).serve()
     for task in tasks:
         task.cancel()

@@ -109,10 +109,12 @@ class Snapshots:
         self._latest, self._at = snap, time.monotonic()
         return snap
 
-    async def get(self) -> tuple[dict[str, Any], float]:
-        """Return (snapshot copy, age in seconds)."""
+    async def get(self, min_age_s: float = 0) -> tuple[dict[str, Any], float]:
+        """Return (snapshot copy, age in seconds). `min_age_s` lets a caller that's polled hard (the board)
+        share a snapshot for at least that long even when the recorder is off."""
         age = time.monotonic() - self._at
-        if self._latest is None or self.max_age_s <= 0 or age > self.max_age_s:
+        max_age = max(self.max_age_s, min_age_s)
+        if self._latest is None or max_age <= 0 or age > max_age:
             await self.refresh()
             age = 0.0
         snap = self._latest

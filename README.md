@@ -41,6 +41,8 @@ uv run pytest                # no network: the feeder is faked
 | `ADSB_EXACT_LOCATION` | `false` | Off = approximate location: when distances are from the site, `aircraft_overhead` rounds positions (~1 km), distance (whole km) and bearing (10°). `true` = exact values. |
 | `ADSB_AIRPORT_ICAO` / `ADSB_AIRPORT_LAT` / `ADSB_AIRPORT_LON` | — | The nearby airport (e.g. `EGLL`). An approximate, public reference point when the site isn't set. |
 | `ADSB_AIRPORT_ELEV_FT` | — | Field elevation. With the airport position, turns on arrival / go-around / departure tracking. |
+| `ADSB_AIRPORT_NAME` | — | Display name for the board header (e.g. `Heathrow`). |
+| `ADSB_BOARD` | `open` | The flight board at `/board`: `open` (no bearer: it carries no site data), `token` (behind the bearer), `off`. |
 | `ADSB_MCP_TOKEN` | — | Bearer required on streamable-http when set. |
 | `ADSB_HTTP_TIMEOUT` | `10` | Seconds. |
 | `ADSB_POLL_SECONDS` | `0` | `>0` turns on the recorder: poll the feeder this often and record passes. `0` = live tools only. 10–15 is a good value. |
@@ -84,6 +86,29 @@ neither a site nor an airport, passes can't be tracked and the recorder stays of
 }
 ```
 
+## Flight board
+
+An airport-style arrivals board (FIDS) for an old phone or tablet on the wall, or a Home Assistant card.
+With the airport set and streamable-HTTP running, open `http://<server>:8000/board`.
+
+- **Arrivals:** aircraft on approach (with ETA), ones lost on approach ("Landing"), and ones seen landing.
+- **Departures:** aircraft climbing out.
+- **Overhead:** everything within `ADSB_PASS_RADIUS_KM` of the airport, nearest first; emergency squawks
+  (7500 / 7600 / 7700) flash red.
+- **Recent:** passes that ended in the last 3 hours, with their outcome (needs the recorder).
+
+The page is one self-contained file: no build, no dependencies, no external fonts. It polls
+`/board.json` every 8 s and renders in the browser, so many displays cost the server almost nothing
+(they share one snapshot for at least 5 s). It reflows for landscape, portrait and small embeds, dropping
+less important columns as space shrinks. Options: `?lang=es`, `?interval=10`, `?sections=arr,ovh`.
+
+Everything on the board is measured from the **airport**, a public place, and aircraft positions are left
+out, so it carries nothing about the receiver's location. That's why it's served without the bearer by
+default (a wall panel or an iframe can't send one); set `ADSB_BOARD=token` or `off` to change that.
+
+In Home Assistant, add a Webpage card with the `/board` URL. If the dashboard is served over https, serve
+the board over https too, or the browser blocks the frame.
+
 ## Docker
 
 ```bash
@@ -106,7 +131,8 @@ docker run -d -p 8000:8000 -v /srv/adsb-mcp-data:/data -e ADSB_POLL_SECONDS=15 \
 ## Auth and exposure
 
 Auth is deliberately simple: stdio, or streamable-HTTP with a single bearer token (`ADSB_MCP_TOKEN`) on a
-private network, for example behind [mcpo](https://github.com/open-webui/mcpo). `/healthz` stays open. There
+private network, for example behind [mcpo](https://github.com/open-webui/mcpo). `/healthz` stays open, and
+so does the flight board (`/board`, `/board.json`) unless `ADSB_BOARD` says otherwise. There
 is **no OAuth, no users and no audit log**, by design. To publish it more widely, put a management layer in
 front of it: an MCP gateway or auth proxy that handles OAuth, users and audit for all your servers at once.
 `ADSB_SITE_LAT/LON` is your home location. It is never echoed in a result, and the store holds distances,
