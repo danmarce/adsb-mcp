@@ -33,7 +33,38 @@ repo, never here.
   be worth it. If you add one-shot subcommands run via `docker run --rm`, bind `/data` explicitly (the
   image declares `VOLUME /data`; an unbound `--rm` run writes to a throwaway anonymous volume).
 
-## Then — "something really interesting" (Daniel, TBD)
+## The ambient FIDS board — `board.json` + `board.html` (the "something interesting"; Daniel, 2026-10-17)
 
-Daniel has a further feature in mind *after* the historical tier. He'll specify it — **leave room, don't
-pre-build.** It likely builds on the store, so keep the schema clean and the recorder/reader seam tidy.
+An **airport arrivals / FIDS board**: an ambient display of what's overhead and arriving, to run on an old
+phone/tablet on a wall **and** embedded in Home Assistant. Minimal, **client-side render**, one data source.
+
+**Two tiny additions, both served by the existing ASGI app (alongside `/healthz`):**
+
+1. **`GET /board.json`** — a read-only snapshot for a display, **airport-referenced** (the public reference
+   point), so it carries **no site/home PII** and can stay **open** (no bearer), like `/healthz`. Built from
+   the live snapshot classified by the pass/airport logic. Shape (draft):
+   - `now`, `airport: {icao, name?}`
+   - `overhead`: in range now, nearest first — `{hex, callsign, type, registration, altitude_ft,
+     ground_speed_kt, track_deg, distance_km, bearing_deg, vertical_rate_fpm, category}`
+   - `arrivals`: on approach — `{callsign, type, distance_km, altitude_ft, eta_min?, status:
+     approaching|arrival_presumed}`
+   - `departures`: climbing out — `{callsign, type, altitude_ft}`
+   - `recent`: last few **closed** passes (just landed / departed / overflew) — the board's "just happened" row.
+
+2. **`GET /board` (board.html)** — one **self-contained** HTML file (HTML+CSS+JS, **no build, no deps**) that
+   polls `/board.json` every ~5–10 s and renders a split-flap / FIDS board **client-side** (the old device
+   does the work; the server only serves JSON + the static file). **Responsive by requirement:** works
+   **landscape** (wall), **portrait** (phone), and a **small iframe** (HA card) — CSS grid/flex that reflows,
+   font scales, drop low-priority columns at narrow widths. One file, one breakpoint set.
+
+**That completes it — one `board.json`, one `board.html`, two homes:**
+- **Standalone:** point an old phone/tablet at `…/board` → full-screen FIDS board (the Kurena wall-panel idea
+  in the homelab `someday/todo.md`).
+- **In HA:** an `iframe`/webpage Lovelace card embedding the same `…/board` URL — it fits because board.html is
+  responsive. (If the HA dashboard is https, serve `/board` via an https name so the browser doesn't block an
+  http iframe.)
+
+**Design rules:** airport-referenced (keeps `/board.json` PII-free + openable) · client-side render (scales to
+N displays at ~zero server cost) · no front-end build or deps (sovereign, runs on anything with a browser).
+*Later:* the same `/board.json` can also feed HA **entities** via a RESTful sensor — for the proactive triggers
+(747-on-final push, squawk-watch) that need aircraft as entities, not a picture.
