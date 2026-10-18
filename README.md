@@ -16,8 +16,8 @@ optional recorder on, "have we seen this one before?" / "what flies here most?".
 
 Data is structured (hex, callsign, registration, type, altitude_ft, ground_speed_kt, track_deg, lat/lon,
 distance_km + bearing_deg from the reference point, seen_s). The site's coordinates are never echoed. Every result has a `status`: `ok` / `refused`
-(caller-fixable, with `advice`) / `error` (receiver unreachable). ADS-B carries no route/airline — that's a
-separate optional enrichment tier (not these tools).
+(caller-fixable, with `advice`) / `error` (receiver unreachable). ADS-B carries no route; the optional
+OpenSky enrichment below adds one.
 
 ## Run
 
@@ -52,6 +52,9 @@ uv run pytest                # no network: the feeder is faked
 | `ADSB_PASS_MERGE_SECONDS` | `600` | An aircraft back within this long of its pass closing continues that pass, so a coverage gap doesn't split one visit in two. |
 | `ADSB_ARRIVAL_GRACE_SECONDS` | `900` | An aircraft lost **on approach** stays open this long (it's presumably landing below coverage). |
 | `ADSB_APPROACH_KM` | `30` | How far from the airport a descent counts as an approach. |
+| `ADSB_OPENSKY_CLIENT_ID` / `ADSB_OPENSKY_CLIENT_SECRET` | — | OpenSky API client (OAuth2). Both set + the recorder on = route enrichment. **Secret: from the environment only.** |
+| `ADSB_OPENSKY_DAILY_CREDITS` | `3000` | Most OpenSky credits the server spends per UTC day (a past-day lookup costs ~30). |
+| `ADSB_OPENSKY_RESERVE` | `1000` | Stop for the day when OpenSky reports fewer credits left than this. |
 | `ADSB_TZ` | `UTC` | IANA zone for local times and hour-of-day stats (e.g. `Europe/London`). |
 
 ## History: passes
@@ -85,6 +88,28 @@ neither a site nor an airport, passes can't be tracked and the recorder stays of
   }
 }
 ```
+
+## Routes from OpenSky (optional)
+
+ADS-B doesn't say where a flight is going. If you feed the [OpenSky Network](https://opensky-network.org),
+your account gets API access (an active feeder gets 8,000 credits a day). Create an API client in your
+OpenSky account and set `ADSB_OPENSKY_CLIENT_ID` / `ADSB_OPENSKY_CLIENT_SECRET`. A background job then adds
+origin and destination airports to recorded passes.
+
+It's built to be a good citizen with access you earned by feeding:
+- It only looks up aircraft your own receiver saw.
+- OpenSky processes flights overnight, so it enriches **yesterday's** passes, after 04:00 UTC.
+- At most **one call per airframe per day**, however many times it passed.
+- It stops for the day at `ADSB_OPENSKY_DAILY_CREDITS`, when OpenSky reports fewer than
+  `ADSB_OPENSKY_RESERVE` credits left, or when OpenSky says to slow down (HTTP 429).
+
+What you get: past passes show `origin` / `destination`, `traffic_stats` can group by `route`, and live
+aircraft carry a `usual_route` — where that callsign has usually flown (e.g. 4 of its last 5 passes to
+SPJC), so the assistant can say "usually flies to Lima". A past pass that broke from its usual route is
+flagged `unusual_route` (a diversion, an unscheduled landing). The board shows usual routes too.
+
+With enrichment on, the **server contacts OpenSky**; the MCP tools themselves still only read the local
+store. Using OpenSky data is subject to [OpenSky's terms](https://opensky-network.org/about/terms-of-use).
 
 ## Flight board
 

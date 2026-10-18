@@ -23,6 +23,7 @@ from mcp.types import TextContent, ToolAnnotations
 
 from .config import Settings
 from .feeder import FeederClient, FeederError, Snapshots, bearing_deg, haversine_km
+from .enrich import enrichment_status, usual_route
 from .store import get_meta
 
 INSTRUCTIONS = """\
@@ -43,14 +44,17 @@ usually ends before the runway), go_around, departure or overflight; go_arounds 
 Three different "most common" questions: airframe (hex/registration — the physical aircraft), callsign
 (the route/service), type (the model).
 
-ADS-B carries no route/airline/registration-owner — only what the aircraft transmits. Enrichment
-(origin/destination, airline, schedule) is a separate optional keyed tier, not these tools.
+ADS-B carries no route — only what the aircraft transmits. When the operator enables enrichment, past
+passes get origin/destination airports (ICAO codes, from OpenSky, learned the day after), and live aircraft
+carry `usual_route`: where that callsign has usually flown (`seen` of `of` past passes) — a strong hint,
+not a flight plan; say so ("usually flies to SPJC, Lima"). `unusual_route` on a past pass marks one that
+differed from its callsign's usual route (a diversion, an unscheduled landing).
 
 Every result has a `status`: "ok", "refused" (caller-fixable input or a tier not enabled, with `advice`),
 or "error" (the receiver is unreachable — `kind`+`detail`; not something a reworded query fixes).
 """
 
-GROUP_BY = ("airframe", "callsign", "type", "outcome", "hour")
+GROUP_BY = ("airframe", "callsign", "type", "outcome", "route", "hour")
 
 # "Approximate location" for aircraft_overhead (ADSB_EXACT_LOCATION off): enough for "about 12 km to the
 # south", too coarse for one result to pinpoint the site. 2 decimals ≈ 1.1 km.
@@ -67,13 +71,19 @@ _GROUP_SQL = {
                      "MIN(first_seen) AS first, MAX(last_seen) AS last"),
     "outcome": ("outcome", "SELECT outcome, COUNT(*) AS passes, COUNT(DISTINCT hex) AS airframes, "
                            "MIN(first_seen) AS first, MAX(last_seen) AS last"),
+    "route": ("route", "SELECT COALESCE(origin, '?') || '-' || COALESCE(destination, '?') AS route, origin, "
+                       "destination, COUNT(*) AS passes, COUNT(DISTINCT hex) AS airframes, "
+                       "GROUP_CONCAT(DISTINCT callsign) AS callsigns, MIN(first_seen) AS first, MAX(last_seen) AS last"),
 }
+# A usual route is "reliable" enough to flag a pass that differs from it.
+RELIABLE_SEEN, RELIABLE_SHARE = 3, 0.6
 
 
 def _read_hints(title: str) -> ToolAnnotations:
     # Pure reads: non-destructive, idempotent (same snapshot / store -> same answer). openWorld = FALSE: it
     # talks only to the lab's OWN LAN receiver or its own local store — a closed dependency, not the public
-    # web or a third party. A future AeroAPI/OpenSky enrichment tool WOULD be openWorld=true.
+    # web or a third party. OpenSky enrichment is a background job writing to that store; the tools never
+    # call out (a tool that queried OpenSky itself WOULD be openWorld=true).
     return ToolAnnotations(title=title, readOnlyHint=True, destructiveHint=False, idempotentHint=True,
                            openWorldHint=False)
 
@@ -113,6 +123,19 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
             return {"kind": "site"}           # the site's coordinates are PII: never echoed
         return {"kind": "airport", "icao": settings.airport_icao}
 
+    def _with_routes(acs: list[dict]) -> list[dict]:
+        """Add `usual_route` (learned from enriched past passes) to live aircraft; a no-op without a store."""
+        conn = _store()
+        if conn is None:
+            return acs
+        try:
+            for a in acs:
+                if r := usual_route(conn, a.get("callsign")):
+                    a["usual_route"] = r
+        finally:
+            conn.close()
+        return acs
+
     @mcp.tool(title="Aircraft overhead", annotations=_read_hints("Aircraft overhead"), structured_output=False)
     async def aircraft_overhead(max_results: int = 10, include_grounded: bool = False) -> list[Any]:
         """Aircraft currently in range of the receiver, nearest first. The "what's that plane overhead
@@ -150,7 +173,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
         out = {"status": "ok", "source": "adsb", "snapshot_age_s": round(age, 1), "reference": _reference(),
                "site_configured": settings.site is not None,
                "precision": "approximate" if approximate else "exact", "count": len(acs),
-               "aircraft": acs[:max(1, max_results)]}
+               "aircraft": _with_routes(acs[:max(1, max_results)])}
         if approximate:
             out["precision_note"] = ("approximate location: positions rounded to ~1 km, distance to whole km, "
                                      f"bearing to {APPROX_BEARING}°")
@@ -187,7 +210,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
         acs.sort(key=lambda a: a["distance_km"])
         return _text({"status": "ok", "source": "adsb", "snapshot_age_s": round(age, 1),
                       "center": {"lat": latitude, "lon": longitude}, "radius_km": radius_km, "count": len(acs),
-                      "aircraft": acs[:max(1, max_results)]})
+                      "aircraft": _with_routes(acs[:max(1, max_results)])})
 
     @mcp.tool(title="Find aircraft", annotations=_read_hints("Find aircraft"), structured_output=False)
     async def find_aircraft(query: str, max_results: int = 10) -> list[Any]:
@@ -208,7 +231,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
         hits = [a for a in snap["aircraft"]
                 if q in (a["callsign"] or "").lower() or q in (a["hex"] or "") or q in (a["registration"] or "").lower()]
         return _text({"status": "ok", "source": "adsb", "snapshot_age_s": round(age, 1), "query": query,
-                      "count": len(hits), "aircraft": hits[:max(1, max_results)]})
+                      "count": len(hits), "aircraft": _with_routes(hits[:max(1, max_results)])})
 
     # --- history tier ---------------------------------------------------------------------------------
 
@@ -232,6 +255,8 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
                                 "last_poll_utc": get_meta(conn, "last_poll_utc"),
                                 "last_poll_ok_utc": get_meta(conn, "last_poll_ok_utc"),
                                 "last_poll_status": get_meta(conn, "last_poll_status")}
+        if settings.enrichment_enabled or get_meta(conn, "opensky_last_run_utc"):
+            info["enrichment"] = enrichment_status(conn, settings)
         ok = info["last_poll_ok_utc"]
         if info["enabled"] and ok:
             lag = time.time() - datetime.fromisoformat(ok.replace("Z", "+00:00")).timestamp()
@@ -247,7 +272,9 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
                 "min_dist_km": r["min_dist_km"], "distance_from": r["reference"],
                 "max_rssi_dbfs": r["max_rssi"], "points": r["points"], "outcome": r["outcome"],
                 "go_arounds": r["go_arounds"], "landed_at": _local(r["landed_at"]),
-                "emergency": r["emergency"], "in_progress": bool(r["open"])}
+                "emergency": r["emergency"], "in_progress": bool(r["open"]),
+                "origin": r["origin"], "destination": r["destination"],
+                "route_source": None if r["route_source"] in (None, "opensky:none") else r["route_source"]}
 
     @mcp.tool(title="Traffic stats", annotations=_read_hints("Traffic stats"), structured_output=False)
     async def traffic_stats(group_by: str = "callsign", since_days: float = 30, order: str = "most",
@@ -259,7 +286,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
         Args:
             group_by: airframe (hex/registration — the physical aircraft), callsign (the route/service),
                 type (the model), outcome (arrival / arrival_presumed / go_around / departure / overflight),
-                or hour (local hour of day the pass began).
+                route (origin-destination airports, ICAO; needs enrichment), or hour (local hour of day).
             since_days: window, in days back from now (default 30).
             order: "most" (default) or "least" — least = the rarest.
             limit: rows returned (default 10, max 100).
@@ -286,7 +313,9 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
                               key=lambda r: (sign * r["passes"], r["hour"]))[:limit]
             else:
                 key, select = _GROUP_SQL[group_by]
-                not_null = "" if group_by == "outcome" else f" AND {key} IS NOT NULL"
+                not_null = ("" if group_by == "outcome"
+                            else " AND route_source = 'opensky' AND (origin IS NOT NULL OR destination IS NOT NULL)"
+                            if group_by == "route" else f" AND {key} IS NOT NULL")
                 direction = "DESC" if order == "most" else "ASC"
                 cur = conn.execute(f"{select} FROM passes WHERE first_seen >= ?{not_null} GROUP BY {key} "
                                    f"ORDER BY passes {direction}, last DESC LIMIT ?", (cutoff, limit))
@@ -303,6 +332,9 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
             out = {"status": "ok", "source": "adsb-history", "group_by": group_by, "since_days": since_days,
                    "order": order, "limit": limit, "tz": tz.key, "total_passes": total["n"],
                    "total_airframes": total["a"], "rows": rows, "recorder": _recorder(conn)}
+            if group_by == "route" and not rows:
+                out["note"] = ("no routes yet: enrichment (ADSB_OPENSKY_CLIENT_ID/SECRET) fills them in the day "
+                               "after a pass")
             if group_by == "outcome" and not settings.arrivals_enabled:
                 out["note"] = "outcomes need ADSB_AIRPORT_LAT/LON + ADSB_AIRPORT_ELEV_FT; without them they are null."
             if not total["n"]:
@@ -340,10 +372,20 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
                                                f"FROM passes WHERE {where} GROUP BY hex ORDER BY n DESC LIMIT 10", args)]
             passes = [_pass_row(r) for r in conn.execute(
                 f"SELECT * FROM passes WHERE {where} ORDER BY first_seen DESC LIMIT ?", (*args, limit))]
+            usual: dict[str, Any] = {}
+            for p in passes:
+                cs = p["callsign"]
+                if cs and cs not in usual:
+                    usual[cs] = usual_route(conn, cs)
+                u = usual.get(cs)
+                if (u and p["route_source"] and u["seen"] >= RELIABLE_SEEN and u["seen"] / u["of"] >= RELIABLE_SHARE
+                        and (p["origin"], p["destination"]) != (u["origin"], u["destination"])):
+                    p["unusual_route"] = True
             return _text({"status": "ok", "source": "adsb-history", "query": query, "limit": limit, "tz": tz.key,
                           "seen_before": summary["n"] > 0, "total_passes": summary["n"],
                           "first_seen": _local(summary["f"]), "last_seen": _local(summary["l"]),
-                          "airframes": airframes, "passes": passes, "recorder": _recorder(conn)})
+                          "airframes": airframes, "usual_routes": {k: v for k, v in usual.items() if v},
+                          "passes": passes, "recorder": _recorder(conn)})
         finally:
             conn.close()
 

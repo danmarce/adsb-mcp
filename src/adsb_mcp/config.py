@@ -71,6 +71,17 @@ class Settings:
     # IANA zone for hour-of-day stats and the local times in history results.
     tz: str = field(default_factory=lambda: os.environ.get("ADSB_TZ") or "UTC")
 
+    # --- enrichment (optional, keyed): OpenSky routes for recorded passes ---
+    # OAuth2 client credentials from your OpenSky account (a secret: from the environment only). Both set +
+    # the recorder on = a background job adds origin/destination to YESTERDAY's passes (OpenSky's flight
+    # data is batch-processed overnight): at most one call per airframe per UTC day.
+    opensky_client_id: str | None = field(default_factory=lambda: os.environ.get("ADSB_OPENSKY_CLIENT_ID") or None)
+    opensky_client_secret: str | None = field(default_factory=lambda: os.environ.get("ADSB_OPENSKY_CLIENT_SECRET") or None)
+    # Good-citizen budget: credits this server may spend per UTC day (a past-day /flights call costs ~30)...
+    opensky_daily_credits: int = field(default_factory=lambda: int(_float("ADSB_OPENSKY_DAILY_CREDITS", 3000)))
+    # ...and stop for the day when OpenSky says fewer than this remain (leaves room for your other use).
+    opensky_reserve: int = field(default_factory=lambda: int(_float("ADSB_OPENSKY_RESERVE", 1000)))
+
     # Bearer token required on streamable-http when set (sent as an Authorization header).
     http_token: str | None = field(default_factory=lambda: os.environ.get("ADSB_MCP_TOKEN") or None)
 
@@ -90,6 +101,10 @@ class Settings:
         if self.airport:
             return "airport", self.airport
         return None
+
+    @property
+    def enrichment_enabled(self) -> bool:
+        return bool(self.opensky_client_id and self.opensky_client_secret)
 
     @property
     def arrivals_enabled(self) -> bool:

@@ -25,8 +25,22 @@ and public). The star query: *"¿qué avión es ese?"*
 - **Keyless local source, with the grain.** It's your receiver; nothing to bypass, no API key, no scraping.
 - **openWorldHint = FALSE** on all five tools (standard §1). Judged by behaviour: they talk only to the
   lab's **own LAN receiver** or the server's **own local store** — closed dependencies, not the public web
-  or a third party. The future enrichment tier (FlightAware AeroAPI / OpenSky) WOULD be a separate
-  `openWorld=true` tool.
+  or a third party. OpenSky enrichment doesn't change this: a **background job** writes routes into the
+  store and the tools only read it. A tool that called OpenSky itself WOULD be `openWorld=true`.
+- **Enrichment is earned and good-citizen** (Daniel's principle): the OpenSky access comes from feeding
+  (active feeder = 8,000 credits/day), and it's spent only on aircraft our own receiver saw. OpenSky's
+  `/flights/aircraft` is batch-processed overnight, so the job enriches **yesterday's** passes (after
+  04:00 UTC), **one call per airframe per UTC day** (`opensky_lookups`), retries an empty answer at most 3×
+  (batch lag), and stops for the day at the credit cap, at the reserve read from `X-Rate-Limit-Remaining`,
+  or on 429's retry-after. Off unless `ADSB_OPENSKY_CLIENT_ID/SECRET` are set (OAuth2 client credentials —
+  OpenSky no longer accepts username/password). Keyless route lookups (adsbdb etc.) were rejected: not
+  earned, and their route data has redistribution limits. Note: the `/flights/*` bucket only shows the
+  feeder boost after ~50 calls, so `X-Rate-Limit-Remaining` may read against 4,000 at first — fine, it
+  only makes the reserve more conservative.
+- **The value is learned**, not live: `usual_route` (most common enriched route of a callsign, with
+  `seen`/`of`) lets the live tools and the board say "usually to SPJC" for a flight in progress, and
+  `unusual_route` flags a past pass that differed (diversion / unscheduled landing — needs ≥ 3 enriched
+  passes, ≥ 60 % share). The board shows a usual route only when it's consistent (≥ 2, ≥ 60 %).
 - **Receiver location is home-location PII.** `ADSB_SITE_LAT/LON` come from the environment (secret store at
   deploy), **never** hardcoded, **never echoed** in a result (the old `observer` field was removed for this),
   and **never stored** (the DB holds distances, not coordinates). Results say `reference: {"kind": "site"}`.
@@ -90,8 +104,9 @@ and public). The star query: *"¿qué avión es ese?"*
 `src/adsb_mcp/`: `config.py` (env settings, `reference` = site → airport → none), `feeder.py` (fetch +
 normalize aircraft.json, haversine/bearing, `Snapshots` cache — the MockTransport target), `passes.py`
 (`Tracker`: snapshots → passes + arrival heuristics; `poll_once`), `store.py` (SQLite schema, WAL, meta),
-`server.py` (tools + `BearerAuth`), `board.py` + `board.html` (the FIDS board), `__init__.py` (`main()`,
-the recorder loop).
+`server.py` (tools + `BearerAuth`), `board.py` + `board.html` (the FIDS board), `enrich.py` (OpenSky client,
+`enrich_once`, `usual_route`), `__init__.py` (`main()`, the recorder + enrichment loops). `store.py` also
+migrates older files (`MIGRATIONS`: columns added after the first release).
 
 ## Tests
 
@@ -105,3 +120,6 @@ the recorder loop).
 - `tests/test_board.py` — `/board.json` content (approach / departure / overhead / emergency, held arrivals
   and recent passes from the store, no positions or site), and open / token / off access through the real
   `BearerAuth` gate (`httpx.ASGITransport`).
+- `tests/test_enrich.py` — against a fake OpenSky: one call per airframe-day + time matching, nothing before
+  the nightly batch, empty → retry → give up, 429 pause, daily cap, reserve, token refresh, migration of a
+  first-release store; usual / unusual route in the tools, `group_by=route`, the board.

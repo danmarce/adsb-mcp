@@ -21,6 +21,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import Settings
+from .enrich import usual_route
 from .feeder import FeederError, Snapshots, bearing_deg, haversine_km
 from .passes import LANDED_KM, airport_frame, climbing_out, fresh_position, on_approach
 
@@ -86,6 +87,17 @@ def build_board(settings: Settings, snap: dict[str, Any], conn: sqlite3.Connecti
         elif phase == "departing":
             departures.append({**ident(a), "status": "departing", "distance_km": round(d, 1),
                                "altitude_ft": a["altitude_ft"], "vertical_rate_fpm": vr})
+    if conn is not None:
+        # Where each callsign usually flies (learned from enriched passes) — only when it's consistent.
+        cache: dict[str, Any] = {}
+        for r in (*overhead, *arrivals, *departures):
+            cs = r.get("callsign")
+            if cs not in cache:
+                u = usual_route(conn, cs)
+                cache[cs] = ({"origin": u["origin"], "destination": u["destination"], "seen": u["seen"]}
+                             if u and u["seen"] >= 2 and u["seen"] / u["of"] >= 0.6 else None)
+            if cache[cs]:
+                r["usual_route"] = cache[cs]
     overhead.sort(key=lambda r: r["distance_km"])
     arrivals.sort(key=lambda r: (r["eta_min"] is None, r["eta_min"] or 0, r["distance_km"]))
     departures.sort(key=lambda r: r["distance_km"])
@@ -106,6 +118,7 @@ def build_board(settings: Settings, snap: dict[str, Any], conn: sqlite3.Connecti
                               (now - RECENT_WINDOW_S, RECENT_MAX)):
             recent.append({"hex": r["hex"], "callsign": r["callsign"], "type": r["type"], "registration": r["reg"],
                            "outcome": r["outcome"], "go_arounds": r["go_arounds"],
+                           "origin": r["origin"], "destination": r["destination"],
                            "time": local(r["landed_at"] or r["last_seen"]), "min_alt_ft": r["min_alt_ft"]})
 
     return {"status": "ok", "source": "adsb-board", "now": local(now), "tz": tz.key,

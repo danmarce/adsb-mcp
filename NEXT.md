@@ -12,6 +12,10 @@ repo, never here.
   write-through, restart-safe, outage-safe), airport reference fallback, arrival / presumed arrival /
   go-around / departure tracking, live tools reusing the recorder's snapshot, and two history tools:
   `traffic_stats`, `aircraft_history`.
+- **Pass merge + approximate location** — coverage gaps reopen the pass; `ADSB_EXACT_LOCATION` opt-in.
+- **Flight board** — `/board` + `/board.json` (see below).
+- **OpenSky enrichment** — yesterday's passes get origin/destination (one call per airframe-day, budgeted);
+  `usual_route` on live aircraft and the board, `unusual_route` on history, `traffic_stats(group_by="route")`.
 
 ## To validate on real data
 
@@ -26,9 +30,18 @@ repo, never here.
 
 - **Dedicated analytics tools** (if callers benefit — `traffic_stats` covers them today):
   `most_common_flights`, `seen_before`, `busiest_times`, `rarest_visitors`, `aircraft_stats`.
-- **`aircraft` dimension table** — `hex → reg/type/operator`, operator filled once from enrichment.
-- **Enrichment tier** (route / origin-dest / airline / registration-owner) — a separate, optional, keyed
-  tier with **openWorld=TRUE** tools (FlightAware AeroAPI / OpenSky). Never mixed into the local tools.
+- **Operator / owner** — OpenSky publishes an aircraft database as a downloadable file (hex → operator,
+  owner, model). Importing it periodically would name the airline with ZERO API calls. Check it's still
+  offered and its licence first.
+- **Validate enrichment on real data** — field names (`estDepartureAirport` / `estArrivalAirport` /
+  `firstSeen` / `lastSeen`) come from OpenSky's Python client; confirm against real responses, and check
+  how often airports come back null around a high-altitude airport with sparse coverage.
+- **Fewer OpenSky calls as history grows** (Daniel's idea; check after a few weeks of data) — skip the
+  lookup for a callsign whose usual route is already reliable (e.g. ≥ 5 passes, ≥ 90 % one route) and only
+  sample it now and then (say weekly) so changes and diversions are still caught. Measure first: credits
+  per day vs. how many lookups just confirmed the usual route.
+- **Live route hint on the board** is the callsign's usual route; a real-time source would need a
+  different (earned) API — FlightAware AeroAPI for feeders is worth a look, FR24's new API is restrictive.
 - **Retention / backup tooling** — the store accumulates; a `backup` subcommand (SQLite online backup) may
   be worth it. If you add one-shot subcommands run via `docker run --rm`, bind `/data` explicitly (the
   image declares `VOLUME /data`; an unbound `--rm` run writes to a throwaway anonymous volume).

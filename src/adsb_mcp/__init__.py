@@ -26,6 +26,23 @@ async def _poll_loop(settings: Settings, snapshots) -> None:
         await asyncio.sleep(settings.poll_seconds)
 
 
+async def _enrich_loop(settings: Settings) -> None:
+    from .enrich import ENRICH_EVERY_S, OpenSky, enrich_once
+    from .store import connect
+
+    conn = connect(settings.db_path)
+    client = OpenSky(settings)
+    log.info("OpenSky enrichment on: yesterday's passes, at most one call per airframe per day "
+             "(cap %d credits/day, reserve %d)", settings.opensky_daily_credits, settings.opensky_reserve)
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await enrich_once(settings, conn, client)
+        except Exception:  # keep serving even if an enrichment run blows up
+            log.exception("enrichment run failed")
+        await asyncio.sleep(ENRICH_EVERY_S)
+
+
 async def _serve(settings: Settings, transport: str, host: str, port: int) -> None:
     from .board import Board
     from .feeder import FeederClient, Snapshots
@@ -45,6 +62,10 @@ async def _serve(settings: Settings, transport: str, host: str, port: int) -> No
         from dataclasses import replace
 
         tasks.append(asyncio.create_task(_poll_loop(replace(settings, poll_seconds=poll_s), snapshots)))
+        if settings.enrichment_enabled:
+            tasks.append(asyncio.create_task(_enrich_loop(settings)))
+    elif settings.enrichment_enabled:
+        log.warning("OpenSky credentials are set but the recorder is off: enrichment needs recorded passes")
 
     if transport == "stdio":
         await mcp.run_stdio_async()

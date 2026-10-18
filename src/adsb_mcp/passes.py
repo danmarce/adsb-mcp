@@ -103,6 +103,9 @@ class Pass:
     landed_at: float | None = None
     outcome: str | None = None
     open: int = 1
+    origin: str | None = None        # set by the enricher (enrich.py) on closed passes, carried on reopen
+    destination: str | None = None
+    route_source: str | None = None
 
 
 _COLS = [f.name for f in fields(Pass) if f.name != "id"]

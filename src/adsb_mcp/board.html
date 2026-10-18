@@ -127,7 +127,7 @@
   const T = {
     en: { arr: "Arrivals", dep: "Departures", ovh: "Overhead", rec: "Recent",
           flight: "Flight", type: "Type", status: "Status", alt: "Alt", dist: "Dist", eta: "ETA", vs: "V/S",
-          spd: "Spd", reg: "Reg", time: "Time", result: "Result", low: "Lowest", none: "No traffic", live: "Live",
+          spd: "Spd", reg: "Reg", time: "Time", result: "Result", low: "Lowest", from: "From", to: "To", route: "Route", none: "No traffic", live: "Live",
           stale: "Stale", offline: "Offline", min: "min",
           st: { approaching: "On approach", arrival_presumed: "Landing", landed: "Landed", departing: "Departing" },
           out: { arrival: "Landed", arrival_presumed: "Landed", go_around: "Go-around", departure: "Departed",
@@ -135,7 +135,7 @@
           foot: "Local ADS-B receiver", rad: "radius" },
     es: { arr: "Llegadas", dep: "Salidas", ovh: "Sobrevolando", rec: "Recientes",
           flight: "Vuelo", type: "Tipo", status: "Estado", alt: "Alt", dist: "Dist", eta: "ETA", vs: "V/S",
-          spd: "Vel", reg: "Matr", time: "Hora", result: "Resultado", low: "Mín", none: "Sin tráfico", live: "En vivo",
+          spd: "Vel", reg: "Matr", time: "Hora", result: "Resultado", low: "Mín", from: "Desde", to: "Hacia", route: "Ruta", none: "Sin tráfico", live: "En vivo",
           stale: "Desactualizado", offline: "Sin conexión", min: "min",
           st: { approaching: "En aproximación", arrival_presumed: "Aterrizando", landed: "Aterrizó", departing: "Despegando" },
           out: { arrival: "Aterrizó", arrival_presumed: "Aterrizó", go_around: "Motor y al aire", departure: "Despegó",
@@ -154,21 +154,30 @@
   const vs = fpm => fpm == null || Math.abs(fpm) < 200 ? "—"
                   : `<span class="${fpm > 0 ? "up" : "down"}">${fpm > 0 ? "▲" : "▼"} ${Math.abs(Math.round(fpm / 100) * 100)}</span>`;
   const hhmm = iso => iso ? iso.slice(11, 16) : "—";
+  // Routes: ICAO codes. A live row's route is the callsign's USUAL route (learned), shown dimmer.
+  const ap = c => esc(c || "?");
+  const route = (o, d) => (o || d) ? `${ap(o)}–${ap(d)}` : "";
+  const usual = (r, k) => r.usual_route && r.usual_route[k] ? `<span class="sub">${ap(r.usual_route[k])}</span>` : "";
+  const usualRoute = r => r.usual_route ? `<span class="sub">${route(r.usual_route.origin, r.usual_route.destination)}</span>` : "";
 
   // column: [header, cell(row) -> html, className]
   const COLS = {
-    arr: [[T.flight, flight], [T.type, r => esc(r.type || "—"), "p2"], [T.reg, r => esc(r.registration || ""), "p3 sub"],
+    arr: [[T.flight, flight], [T.from, r => usual(r, "origin"), "p2"], [T.type, r => esc(r.type || "—"), "p2"],
+          [T.reg, r => esc(r.registration || ""), "p3 sub"],
           [T.status, r => `<span class="st-${r.status}">${esc(T.st[r.status] || r.status)}</span>`],
           [T.alt, r => alt(r.altitude_ft), "num p2"], [T.dist, r => r.distance_km == null ? "" : dist(r.distance_km), "num"],
           [T.eta, r => r.eta_min != null ? `${r.eta_min} ${T.min}` : r.time ? hhmm(r.time) : "—", "num"]],
-    dep: [[T.flight, flight], [T.type, r => esc(r.type || "—"), "p2"], [T.reg, r => esc(r.registration || ""), "p3 sub"],
+    dep: [[T.flight, flight], [T.to, r => usual(r, "destination"), "p2"], [T.type, r => esc(r.type || "—"), "p2"],
+          [T.reg, r => esc(r.registration || ""), "p3 sub"],
           [T.alt, r => alt(r.altitude_ft), "num"], [T.dist, r => dist(r.distance_km), "num p2"],
           [T.vs, r => vs(r.vertical_rate_fpm), "num"]],
-    ovh: [[T.flight, flight], [T.type, r => esc(r.type || "—")], [T.reg, r => esc(r.registration || ""), "p3 sub"],
+    ovh: [[T.flight, flight], [T.type, r => esc(r.type || "—")], [T.route, usualRoute, "p3"],
+          [T.reg, r => esc(r.registration || ""), "p3 sub"],
           [T.alt, r => alt(r.altitude_ft), "num"], [T.spd, r => r.ground_speed_kt == null ? "—" : Math.round(r.ground_speed_kt), "num p3"],
           [T.vs, r => vs(r.vertical_rate_fpm), "num p2"], [T.dist, r => dist(r.distance_km, r.bearing_deg), "num"],
           ["", r => r.track_deg == null ? "" : `<span class="arrow" style="transform:rotate(${Math.round(r.track_deg)}deg)">↑</span>`, "p2"]],
-    rec: [[T.time, r => hhmm(r.time), "num"], [T.flight, flight], [T.type, r => esc(r.type || "—"), "p2"],
+    rec: [[T.time, r => hhmm(r.time), "num"], [T.flight, flight], [T.route, r => route(r.origin, r.destination), "p2"],
+          [T.type, r => esc(r.type || "—"), "p2"],
           [T.reg, r => esc(r.registration || ""), "p3 sub"],
           [T.result, r => r.outcome ? `<span class="st-${r.outcome}">${esc(T.out[r.outcome] || r.outcome)}${r.go_arounds ? " ×" + r.go_arounds : ""}</span>` : "—"],
           [T.low, r => alt(r.min_alt_ft), "num p3"]],
