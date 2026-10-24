@@ -44,6 +44,25 @@ aliases (SEHI / SEAS), and distinct lookup states. Still open:
 - **LNE1440 SEQM→SEQM** (21 Oct): a return to field, or a missing leg? Worth a look if it repeats.
 - **N355GB** (BE30, 18 passes, always overflight): a local survey / calibration aircraft — a candidate for a
   "local / loitering" outcome if more show up.
+- **One-off callsigns are the route gap**: 100+ callsigns were seen only once in the week — mostly cargo
+  (ABX / LCO / LTG / GTI / LAE B763 / B744, a new flight number each trip) and GLG 16xx numbers. A
+  per-callsign `usual_route` can never cover them.
+
+### Route coverage: plan (Daniel, 2026-10-23)
+
+1. **Airframe fallback (local, free — build first):** when a live callsign has no usual route, use the
+   *airframe's* usual route (`hex` → most common enriched route), labelled as such (`basis: "airframe"`).
+   Cargo shuttles fly the same pairs under changing flight numbers.
+2. **Feed adsb.lol** (Daniel, on the feeder — not this repo). Little or no Ecuador coverage today, so the
+   feed helps them; and if their network covers the far-end airports (international origins), it may fill
+   the `SEQM-?` / `?-SEHI` gaps. Their API is announced to require a key earned by feeding — fits the
+   "earned" principle.
+3. **Then measure** (1–2 weeks): share of live aircraft with a route from callsign / airframe / none, and
+   of passes with one end missing. If "none" is still large, **evaluate adsb.lol's route lookup** for that
+   remainder — it's hobbyist-run, so check before building: the actual endpoint and its plausibility check,
+   the **licence of the route data itself** (may differ from the ODbL positions), accuracy on cargo /
+   charter / multi-leg (LNE1423) against OpenSky's matched legs, and rate limits. Any tool that calls it
+   live would be `openWorldHint=true`; a background job writing to the store would not change the hints.
 
 ### Field notes (Daniel, 2026-10-18 — after the first hours of the board)
 
