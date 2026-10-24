@@ -50,6 +50,11 @@ class Settings:
     airport_lat: float | None = field(default_factory=lambda: _opt_float("ADSB_AIRPORT_LAT"))
     airport_lon: float | None = field(default_factory=lambda: _opt_float("ADSB_AIRPORT_LON"))
     airport_elev_ft: float | None = field(default_factory=lambda: _opt_float("ADSB_AIRPORT_ELEV_FT"))
+    # Nearby airfields OpenSky reports in place of the airport (it names the aerodrome nearest the last
+    # position it saw): normalized to ADSB_AIRPORT_ICAO when READ; the store keeps OpenSky's value verbatim.
+    airport_aliases: tuple[str, ...] = field(default_factory=lambda: tuple(
+        c for c in (x.strip().upper() for x in (os.environ.get("ADSB_AIRPORT_ALIASES") or "").split(","))
+        if c.isalnum() and 3 <= len(c) <= 4))
     airport_name: str | None = field(default_factory=lambda: (os.environ.get("ADSB_AIRPORT_NAME") or "").strip() or None)
     # The FIDS board (/board, /board.json; streamable-http only). Airport-referenced, so no site PII:
     # open = no bearer needed (wall panels / HA iframes can't send one), token = behind the bearer, off.

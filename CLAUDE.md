@@ -41,6 +41,13 @@ and public). The star query: *"¿qué avión es ese?"*
   `seen`/`of`) lets the live tools and the board say "usually to SPJC" for a flight in progress, and
   `unusual_route` flags a past pass that differed (diversion / unscheduled landing — needs ≥ 3 enriched
   passes, ≥ 60 % share). The board shows a usual route only when it's consistent (≥ 2, ≥ 60 %).
+- **OpenSky airport codes are stored verbatim; aliases apply on read** (standard §5). Measured in the first
+  week: OpenSky names the aerodrome nearest the last position *it* saw, so Quito arrivals came back as SEHI
+  (Cotacachi) and departures as SEAS (Ascázubi). `ADSB_AIRPORT_ALIASES` maps such codes to the airport in
+  `enrich.airport` / `airport_sql` (routes, usual_route, stats, board); results show `*_reported` with
+  OpenSky's own code when it differs. Changing the alias list re-reads history — nothing to migrate.
+- **Lookup state is explicit**: `route_lookup` = matched | no_match | pending, and `last_7_days` counts,
+  so "OpenSky had nothing" never looks like "not asked yet".
 - **Receiver location is home-location PII.** `ADSB_SITE_LAT/LON` come from the environment (secret store at
   deploy), **never** hardcoded, **never echoed** in a result (the old `observer` field was removed for this),
   and **never stored** (the DB holds distances, not coordinates). Results say `reference: {"kind": "site"}`.

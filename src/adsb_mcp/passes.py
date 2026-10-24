@@ -14,7 +14,10 @@ The heuristics are deliberately simple and documented here:
   * landed        : on the ground within 5 km of the airport after an approach (confirmed).
   * go-around     : after getting below 2,000 ft above the field, climbing ≥ 700 ft back up at ≥ 500 fpm
                     within 15 km of the airport. Counted, and the approach must re-arm to count another.
-  * departure     : first seen airborne within 10 km of the airport, below 3,000 ft above it, climbing ≥ 300 fpm.
+  * departure     : in its first few snapshots (`DEPARTURE_SAMPLES`), airborne within 25 km of the airport,
+                    below 5,000 ft above it, climbing ≥ 300 fpm. (Widened 2026-10-23 from "first sample, 10 km,
+                    3,000 ft": the same daily departure, LNE1397, was a departure 3 days and an overflight 4 —
+                    terrain hides the takeoff and the receiver first sees it ~20 km out, turning south.)
 Outcome on close: arrival (landed seen) > arrival_presumed (lost on approach) > go_around (went around,
 then left) > departure > overflight. Without arrival tracking the outcome is null.
 
@@ -45,8 +48,9 @@ GA_LOW_AGL = 2_000
 GA_CLIMB_FT = 700
 GA_RATE_FPM = 500
 GA_KM = 15
-DEPARTURE_KM = 10
-DEPARTURE_AGL = 3_000
+DEPARTURE_KM = 25
+DEPARTURE_AGL = 5_000
+DEPARTURE_SAMPLES = 4       # snapshots at the start of a pass in which the departure rule may fire
 DEPARTURE_CLIMB_FPM = 300
 
 
@@ -162,10 +166,12 @@ class Tracker:
                 p = self._reopen(hx, t)
                 if p is None:
                     p = Pass(hex=hx, first_seen=t, last_seen=t, last_in_zone=t, reference=self.ref_kind)
-                    if (agl is not None and d_ap <= DEPARTURE_KM and agl <= DEPARTURE_AGL
-                            and vr is not None and vr >= DEPARTURE_CLIMB_FPM):
-                        p.departure = 1
                 self.open[hx] = p
+
+            if (not p.departure and p.points < DEPARTURE_SAMPLES and p.approach_low_agl_ft is None
+                    and agl is not None and d_ap <= DEPARTURE_KM and agl <= DEPARTURE_AGL
+                    and vr is not None and vr >= DEPARTURE_CLIMB_FPM):
+                p.departure = 1
 
             p.last_seen = max(p.last_seen, t)
             p.points += 1

@@ -26,6 +26,25 @@ repo, never here.
 - Baro altitude is pressure altitude, not QNH: at a high airport the AGL estimate can be off by a few
   hundred feet. Landing is confirmed by `on_ground`, not altitude, for that reason.
 
+### First week, measured (2026-10-23)
+
+1,104 passes from 276 airframes in 6 days; peaks at 08:00 and 17–18:00 local. Outcomes: 448
+`arrival_presumed`, 332 `overflight`, 323 `departure`, **0 confirmed `arrival` and 0 go-arounds** — the
+receiver never sees an aircraft on the ground at SEQM, so `arrival_presumed` IS the arrival count here.
+Enrichment: ~330 credits/day used, remaining reported ~4,900 — far under the cap, so the "fewer calls" idea
+isn't needed at this volume yet. Roughly 40 % of eligible passes got at least one airport.
+
+Fixed from this data: the departure rule (same daily flight split 3 departure / 4 overflight), airport
+aliases (SEHI / SEAS), and distinct lookup states. Still open:
+- **Correct history with enrichment**: `overflight` passes whose (aliased) origin is the airport were
+  departures; destination = airport → arrival. A read-time `outcome_enriched` would fix the first week too
+  (the widened rule only helps new passes). Measure after the new rule has run a week: how many remain.
+- **Many routes have one end missing** (`SEQM-?` 92 passes): OpenSky didn't see the other end. Nothing to
+  fix on our side; maybe show only the known end on the board (it does).
+- **LNE1440 SEQM→SEQM** (21 Oct): a return to field, or a missing leg? Worth a look if it repeats.
+- **N355GB** (BE30, 18 passes, always overflight): a local survey / calibration aircraft — a candidate for a
+  "local / loitering" outcome if more show up.
+
 ### Field notes (Daniel, 2026-10-18 — after the first hours of the board)
 
 - **Missed takeoffs look like overflights.** Terrain hides some departures; the receiver first sees them

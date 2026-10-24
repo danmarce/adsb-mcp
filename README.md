@@ -41,6 +41,7 @@ uv run pytest                # no network: the feeder is faked
 | `ADSB_EXACT_LOCATION` | `false` | Off = approximate location: when distances are from the site, `aircraft_overhead` rounds positions (~1 km), distance (whole km) and bearing (10°). `true` = exact values. |
 | `ADSB_AIRPORT_ICAO` / `ADSB_AIRPORT_LAT` / `ADSB_AIRPORT_LON` | — | The nearby airport (e.g. `EGLL`). An approximate, public reference point when the site isn't set. |
 | `ADSB_AIRPORT_ELEV_FT` | — | Field elevation. With the airport position, turns on arrival / go-around / departure tracking. |
+| `ADSB_AIRPORT_ALIASES` | — | Nearby airfields OpenSky reports instead of your airport (e.g. `SEAS,SEHI`), counted as the airport when reading routes. The store keeps OpenSky's codes as received. |
 | `ADSB_AIRPORT_NAME` | — | Display name for the board header (e.g. `Heathrow`). |
 | `ADSB_BOARD` | `open` | The flight board at `/board`: `open` (no bearer: it carries no site data), `token` (behind the bearer), `off`. |
 | `ADSB_MCP_TOKEN` | — | Bearer required on streamable-http when set. |
@@ -107,6 +108,11 @@ What you get: past passes show `origin` / `destination`, `traffic_stats` can gro
 aircraft carry a `usual_route` — where that callsign has usually flown (e.g. 4 of its last 5 passes to
 SPJC), so the assistant can say "usually flies to Lima". A past pass that broke from its usual route is
 flagged `unusual_route` (a diversion, an unscheduled landing). The board shows usual routes too.
+
+OpenSky estimates each airport from the last position its network saw, so when coverage ends before the
+runway it can name a nearby airfield instead of yours. List those in `ADSB_AIRPORT_ALIASES`. Each pass's
+`route_lookup` says whether it was `matched`, looked up with `no_match` (OpenSky had no overlapping
+flight), or is still `pending`; `recorder.enrichment.last_7_days` counts each.
 
 With enrichment on, the **server contacts OpenSky**; the MCP tools themselves still only read the local
 store. Using OpenSky data is subject to [OpenSky's terms](https://opensky-network.org/about/terms-of-use).

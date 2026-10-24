@@ -23,7 +23,7 @@ from mcp.types import TextContent, ToolAnnotations
 
 from .config import Settings
 from .feeder import FeederClient, FeederError, Snapshots, bearing_deg, haversine_km
-from .enrich import enrichment_status, usual_route
+from .enrich import airport, airport_sql, enrichment_status, lookup_state, usual_route
 from .store import get_meta
 
 INSTRUCTIONS = """\
@@ -71,8 +71,8 @@ _GROUP_SQL = {
                      "MIN(first_seen) AS first, MAX(last_seen) AS last"),
     "outcome": ("outcome", "SELECT outcome, COUNT(*) AS passes, COUNT(DISTINCT hex) AS airframes, "
                            "MIN(first_seen) AS first, MAX(last_seen) AS last"),
-    "route": ("route", "SELECT COALESCE(origin, '?') || '-' || COALESCE(destination, '?') AS route, origin, "
-                       "destination, COUNT(*) AS passes, COUNT(DISTINCT hex) AS airframes, "
+    "route": ("route", "SELECT COALESCE({o}, '?') || '-' || COALESCE({d}, '?') AS route, {o} AS origin, "
+                       "{d} AS destination, COUNT(*) AS passes, COUNT(DISTINCT hex) AS airframes, "
                        "GROUP_CONCAT(DISTINCT callsign) AS callsigns, MIN(first_seen) AS first, MAX(last_seen) AS last"),
 }
 # A usual route is "reliable" enough to flag a pass that differs from it.
@@ -130,7 +130,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
             return acs
         try:
             for a in acs:
-                if r := usual_route(conn, a.get("callsign")):
+                if r := usual_route(conn, a.get("callsign"), settings):
                     a["usual_route"] = r
         finally:
             conn.close()
@@ -273,8 +273,18 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
                 "max_rssi_dbfs": r["max_rssi"], "points": r["points"], "outcome": r["outcome"],
                 "go_arounds": r["go_arounds"], "landed_at": _local(r["landed_at"]),
                 "emergency": r["emergency"], "in_progress": bool(r["open"]),
-                "origin": r["origin"], "destination": r["destination"],
-                "route_source": None if r["route_source"] in (None, "opensky:none") else r["route_source"]}
+                **_route_fields(r)}
+
+    def _route_fields(r: sqlite3.Row) -> dict[str, Any]:
+        # Aliases applied for reading; OpenSky's own code kept alongside whenever it differs.
+        out: dict[str, Any] = {"origin": airport(r["origin"], settings),
+                               "destination": airport(r["destination"], settings),
+                               "route_source": "opensky" if r["route_source"] == "opensky" else None,
+                               "route_lookup": lookup_state(r["route_source"], r["open"])}
+        for k in ("origin", "destination"):
+            if r[k] and out[k] != r[k]:
+                out[f"{k}_reported"] = r[k]
+        return out
 
     @mcp.tool(title="Traffic stats", annotations=_read_hints("Traffic stats"), structured_output=False)
     async def traffic_stats(group_by: str = "callsign", since_days: float = 30, order: str = "most",
@@ -313,6 +323,8 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
                               key=lambda r: (sign * r["passes"], r["hour"]))[:limit]
             else:
                 key, select = _GROUP_SQL[group_by]
+                if group_by == "route":
+                    select = select.format(o=airport_sql("origin", settings), d=airport_sql("destination", settings))
                 not_null = ("" if group_by == "outcome"
                             else " AND route_source = 'opensky' AND (origin IS NOT NULL OR destination IS NOT NULL)"
                             if group_by == "route" else f" AND {key} IS NOT NULL")
@@ -376,7 +388,7 @@ def build_server(settings: Settings, snapshots: Snapshots | None = None) -> MCPS
             for p in passes:
                 cs = p["callsign"]
                 if cs and cs not in usual:
-                    usual[cs] = usual_route(conn, cs)
+                    usual[cs] = usual_route(conn, cs, settings)
                 u = usual.get(cs)
                 if (u and p["route_source"] and u["seen"] >= RELIABLE_SEEN and u["seen"] / u["of"] >= RELIABLE_SHARE
                         and (p["origin"], p["destination"]) != (u["origin"], u["destination"])):

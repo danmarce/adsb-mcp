@@ -266,3 +266,27 @@ def test_a_landed_pass_is_never_reopened(settings):
         snap(1300), snap(1400, ac("e80013", 3, 9000, 2000)))   # quick turnaround: a new (departure) pass
     r = rows(settings)
     assert len(r) == 2 and r[0]["outcome"] == "arrival" and r[1]["departure"] == 1
+
+
+def test_departure_first_seen_well_out_while_climbing(settings):
+    # The LNE1397 case: takeoff hidden by terrain, first seen ~20 km out, ~1,700 ft above the field, climbing.
+    tr = Tracker(settings, connect(settings.db_path))
+    run(tr, snap(1000, ac("e80020", 20, 9600, 2200)), snap(1015, ac("e80020", 24, 10200, 2400)),
+        snap(1030, ac("e80020", 70, 19000, 2000)), snap(1300))
+    (r,) = rows(settings)
+    assert r["departure"] == 1 and r["outcome"] == "departure"
+
+
+def test_departure_rule_fires_in_the_first_few_snapshots_only(settings):
+    tr = Tracker(settings, connect(settings.db_path))
+    run(tr, snap(1000, ac("e80021", 15, 11000, 0)), snap(1015, ac("e80021", 16, 11000, 1500)))   # 2nd sample
+    run(tr, snap(1000, ac("e80022", 15, 11000, 0)), *(snap(1015 + 15 * i, ac("e80022", 15, 11000, 0)) for i in range(5)),
+        snap(1100, ac("e80022", 16, 11500, 1500)))                                                # too late
+    flags = {r["hex"]: r["departure"] for r in rows(settings)}
+    assert flags == {"e80021": 1, "e80022": 0}
+
+
+def test_high_climbing_overflight_is_not_a_departure(settings):
+    tr = Tracker(settings, connect(settings.db_path))
+    run(tr, snap(1000, ac("e80023", 20, 16000, 1500)), snap(1300))      # 8,100 ft above the field
+    assert rows(settings)[0]["outcome"] == "overflight"

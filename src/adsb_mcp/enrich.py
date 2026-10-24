@@ -207,14 +207,42 @@ async def enrich_once(settings: Settings, conn: sqlite3.Connection, client: Open
     return summary
 
 
-def usual_route(conn: sqlite3.Connection, callsign: str | None, days: int = 90) -> dict[str, Any] | None:
+# --- reading routes: OpenSky's value is stored verbatim; aliases are applied here ------------------------
+
+def airport(code: str | None, settings: Settings | None) -> str | None:
+    """OpenSky's airport code, with a configured alias of our airport mapped to it."""
+    if code and settings and settings.airport_icao and code.upper() in settings.airport_aliases:
+        return settings.airport_icao
+    return code
+
+
+def airport_sql(col: str, settings: Settings | None) -> str:
+    """SQL for `airport()` (codes are validated alphanumerics in config, so inlining them is safe)."""
+    if not (settings and settings.airport_icao and settings.airport_aliases):
+        return col
+    codes = ", ".join(f"'{c}'" for c in settings.airport_aliases)
+    return f"(CASE WHEN {col} IN ({codes}) THEN '{settings.airport_icao}' ELSE {col} END)"
+
+
+def lookup_state(route_source: str | None, open_: int) -> str | None:
+    """matched | no_match (looked up, OpenSky had no flight overlapping the pass) | pending | None (open)."""
+    if route_source == "opensky":
+        return "matched"
+    if route_source == "opensky:none":
+        return "no_match"
+    return None if open_ else "pending"
+
+
+def usual_route(conn: sqlite3.Connection, callsign: str | None, settings: Settings | None = None,
+                days: int = 90) -> dict[str, Any] | None:
     """Where this callsign has usually flown, learned from enriched passes. None if nothing's known."""
     if not callsign:
         return None
+    o, d = airport_sql("origin", settings), airport_sql("destination", settings)
     rows = conn.execute(
-        "SELECT origin, destination, COUNT(*) AS n FROM passes WHERE callsign = ? AND route_source = 'opensky' "
-        "AND (origin IS NOT NULL OR destination IS NOT NULL) AND first_seen >= ? "
-        "GROUP BY origin, destination ORDER BY n DESC", (callsign, time.time() - days * 86400)).fetchall()
+        f"SELECT {o} AS origin, {d} AS destination, COUNT(*) AS n FROM passes WHERE callsign = ? "
+        "AND route_source = 'opensky' AND (origin IS NOT NULL OR destination IS NOT NULL) AND first_seen >= ? "
+        f"GROUP BY {o}, {d} ORDER BY n DESC", (callsign, time.time() - days * 86400)).fetchall()
     if not rows:
         return None
     total = sum(r["n"] for r in rows)
@@ -224,7 +252,13 @@ def usual_route(conn: sqlite3.Connection, callsign: str | None, days: int = 90) 
 
 
 def enrichment_status(conn: sqlite3.Connection, settings: Settings) -> dict[str, Any]:
+    week = conn.execute(
+        "SELECT SUM(route_source = 'opensky') AS matched, SUM(route_source = 'opensky:none') AS no_match, "
+        "SUM(route_source IS NULL) AS pending FROM passes WHERE open = 0 AND first_seen >= ?",
+        (time.time() - 7 * 86400,)).fetchone()
     return {"enabled": settings.enrichment_enabled, "source": "opensky",
+            "last_7_days": {k: week[k] or 0 for k in ("matched", "no_match", "pending")},
+            "airport_aliases": list(settings.airport_aliases),
             "last_run_utc": get_meta(conn, "opensky_last_run_utc"),
             "last_status": get_meta(conn, "opensky_last_status"),
             "credits_today": int(get_meta(conn, "opensky_credits_today") or 0),

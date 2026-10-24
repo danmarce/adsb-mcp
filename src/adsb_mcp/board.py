@@ -24,7 +24,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import Settings
-from .enrich import usual_route
+from .enrich import airport, usual_route
 from .feeder import FeederError, Snapshots, bearing_deg, haversine_km
 from .passes import LANDED_KM, airport_frame, climbing_out, fresh_position, on_approach
 
@@ -135,7 +135,7 @@ def build_board(settings: Settings, snap: dict[str, Any], conn: sqlite3.Connecti
         for r in (*overhead, *arrivals, *departures):
             cs = r.get("callsign")
             if cs not in cache:
-                u = usual_route(conn, cs)
+                u = usual_route(conn, cs, settings)
                 cache[cs] = ({"origin": u["origin"], "destination": u["destination"], "seen": u["seen"]}
                              if u and u["seen"] >= 2 and u["seen"] / u["of"] >= 0.6 else None)
             if cache[cs]:
@@ -160,7 +160,8 @@ def build_board(settings: Settings, snap: dict[str, Any], conn: sqlite3.Connecti
                               (now - RECENT_WINDOW_S, RECENT_MAX)):
             recent.append({"hex": r["hex"], "callsign": r["callsign"], "type": r["type"], "registration": r["reg"],
                            "outcome": r["outcome"], "go_arounds": r["go_arounds"],
-                           "origin": r["origin"], "destination": r["destination"],
+                           "origin": airport(r["origin"], settings),
+                           "destination": airport(r["destination"], settings),
                            "time": local(r["landed_at"] or r["last_seen"]), "min_alt_ft": r["min_alt_ft"]})
 
     return {"status": "ok", "source": "adsb-board", "now": local(now), "tz": tz.key,

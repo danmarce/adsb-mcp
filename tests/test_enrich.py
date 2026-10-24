@@ -223,3 +223,38 @@ def test_live_tool_and_board_carry_the_usual_route(enriched, monkeypatch):
     snaps = Snapshots(FeederClient(enriched))
     board = build_board(enriched, asyncio.run(snaps.get())[0], connect(enriched.db_path))
     assert board["overhead"][0]["usual_route"] == {"origin": "SEQM", "destination": "SPJC", "seen": 4}
+
+
+def test_airport_aliases_apply_when_reading_and_the_store_stays_raw(settings, monkeypatch):
+    monkeypatch.setenv("ADSB_AIRPORT_ALIASES", "seas, SEHI, bad-code")
+    s = Settings()
+    assert s.airport_aliases == ("SEAS", "SEHI")            # junk dropped
+    conn = connect(s.db_path)
+    for i, dest in enumerate(("SEHI", "SEQM", "SEHI")):
+        add_pass(conn, f"e8300{i}", "KLM755", DAY0 + 3600 * (i + 1), DAY0 + 3600 * (i + 1) + 300, "arrival_presumed")
+    fake = FakeOpenSky({f"e8300{i}": [flight("KLM755", "EHAM", d, DAY0, DAY0 + 80000)]
+                        for i, d in enumerate(("SEHI", "SEQM", "SEHI"))})
+    run(s, fake)
+    assert [r[2] for r in routes(s)] == ["SEHI", "SEQM", "SEHI"]          # OpenSky's values, verbatim
+    u = usual_route(connect(s.db_path), "KLM755", s)
+    assert (u["origin"], u["destination"], u["seen"], u["of"]) == ("EHAM", "SEQM", 3, 3)
+    rows_ = _call(s, "traffic_stats", {"group_by": "route"})["rows"]
+    assert [(r["route"], r["passes"]) for r in rows_] == [("EHAM-SEQM", 3)]
+    p = _call(s, "aircraft_history", {"query": "KLM755"})["passes"]
+    assert {(x["destination"], x.get("destination_reported")) for x in p} == {("SEQM", "SEHI"), ("SEQM", None)}
+    assert not any(x.get("unusual_route") for x in p)
+
+
+def test_lookup_states_are_distinct(settings):
+    conn = connect(settings.db_path)
+    add_pass(conn, "e84001", "MATCH1", DAY0 + 3600, DAY0 + 4000)
+    add_pass(conn, "e84002", "NOPE1", DAY0 + 3600, DAY0 + 4000)
+    add_pass(conn, "e84003", "LATER1", int(time.time()) - 600, int(time.time()) - 300)   # today: not yet
+    fake = FakeOpenSky({"e84001": [flight("MATCH1", "SKBO", "SEQM", DAY0 + 3000, DAY0 + 5000)],
+                        "e84002": [flight("NOPE1", "SKBO", "SEQM", DAY0 + 40000, DAY0 + 45000)]})   # no overlap
+    run(settings, fake)
+    state = {cs: _call(settings, "aircraft_history", {"query": cs})["passes"][0]["route_lookup"]
+             for cs in ("MATCH1", "NOPE1", "LATER1")}
+    assert state == {"MATCH1": "matched", "NOPE1": "no_match", "LATER1": "pending"}
+    week = _call(settings, "aircraft_history", {"query": "MATCH1"})["recorder"]["enrichment"]["last_7_days"]
+    assert week == {"matched": 1, "no_match": 1, "pending": 1}
